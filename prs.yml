@@ -8,15 +8,31 @@
 #   note:     free-form text — useful to remember what each PR is about
 #   pin:      <sha> — pin to a specific commit instead of the latest PR head
 #   enabled:  false — temporarily skip without deleting the entry
+#   merged:   true — set after a successful merge; head/commit record the SHAs
 
 prs:
   - number: 8675
     note: "Add Steel as an optional plugin system"
+    merged: true
+    head: 47b4664ac868b334c9cb914d6b6bfa2045249d13
+    commit: 3bf2f304f
   - number: 13133
     note: "feat: Inline Git Blame"
+    merged: true
+    head: a828b56096ee0ab170551cf0e21944e38ed38ceb
+    commit: 967a6e283
   - number: 14544
     note: "implement file-watching based on filesentry"
+    merged: true
+    head: 0cf47ab64a013a91355c0091c987849020bfa275
+    commit: 3758101fb
   - number: 11497
     note: "feat: added rounded-corners option to draw rounded borders"
+    merged: true
+    head: fe3ea614a26e4fbaf305e5dc71bab12f0a35104a
+    commit: 713524b12
   - number: 14876
     note: "feat(lsp): add textDocument/inlineCompletion support"
+    merged: true
+    head: e927a2256ebdd67ff45811ed782af26a0f34c05f
+    commit: 5e4efc61a
