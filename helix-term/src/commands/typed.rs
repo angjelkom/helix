@@ -1525,10 +1525,12 @@ fn reload(cx: &mut compositor::Context, _args: Args, event: PromptEvent) -> anyh
     })?;
     let doc_id = doc.id();
     if let Some(path) = doc.path() {
-        cx.editor
-            .language_servers
-            .file_event_handler
-            .file_changed(path.clone());
+        if !cx.editor.file_watcher.is_watching(path) {
+            cx.editor
+                .language_servers
+                .file_event_handler
+                .file_changed(path.clone());
+        }
     }
 
     if doc.should_request_full_file_blame(auto_fetch) {
@@ -1588,10 +1590,12 @@ fn reload_all(cx: &mut compositor::Context, _args: Args, event: PromptEvent) -> 
         }
 
         if let Some(path) = doc.path() {
-            cx.editor
-                .language_servers
-                .file_event_handler
-                .file_changed(path.clone());
+            if !cx.editor.file_watcher.is_watching(path) {
+                cx.editor
+                    .language_servers
+                    .file_event_handler
+                    .file_changed(path.clone());
+            }
         }
 
         for view_id in view_ids {
