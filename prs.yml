@@ -1,0 +1,22 @@
+# List of upstream helix-editor/helix PRs to merge into the `nightly` branch.
+# Order matters: PRs are merged top-to-bottom on top of upstream/master.
+#
+# Required field:
+#   number:   the upstream PR number
+#
+# Optional fields:
+#   note:     free-form text — useful to remember what each PR is about
+#   pin:      <sha> — pin to a specific commit instead of the latest PR head
+#   enabled:  false — temporarily skip without deleting the entry
+
+prs:
+  - number: 8675
+    note: "Add Steel as an optional plugin system"
+  - number: 13133
+    note: "feat: Inline Git Blame"
+  - number: 14544
+    note: "implement file-watching based on filesentry"
+  - number: 11497
+    note: "feat: added rounded-corners option to draw rounded borders"
+  - number: 14876
+    note: "feat(lsp): add textDocument/inlineCompletion support"
