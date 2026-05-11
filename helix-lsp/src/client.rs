@@ -403,6 +403,10 @@ impl Client {
                         | CallHierarchyServerCapability::Options(_)
                 )
             ),
+            LanguageServerFeature::InlineCompletion => matches!(
+                capabilities.inline_completion_provider,
+                Some(OneOf::Left(true) | OneOf::Right(_))
+            ),
         }
     }
 
@@ -737,6 +741,9 @@ impl Client {
                         }),
                         hierarchical_document_symbol_support: Some(false),
                         ..Default::default()
+                    }),
+                    inline_completion: Some(lsp::InlineCompletionClientCapabilities {
+                        dynamic_registration: Some(false),
                     }),
                     ..Default::default()
                 }),
@@ -1232,6 +1239,29 @@ impl Client {
         };
 
         Some(self.call::<lsp::request::InlayHintRequest>(params))
+    }
+
+    pub fn inline_completion(
+        &self,
+        text_document: lsp::TextDocumentIdentifier,
+        position: lsp::Position,
+        context: lsp::InlineCompletionContext,
+        work_done_token: Option<lsp::ProgressToken>,
+    ) -> Option<impl Future<Output = Result<Option<lsp::InlineCompletionResponse>>>> {
+        if !self.supports_feature(LanguageServerFeature::InlineCompletion) {
+            return None;
+        }
+
+        let params = lsp::InlineCompletionParams {
+            text_document_position: lsp::TextDocumentPositionParams {
+                text_document,
+                position,
+            },
+            context,
+            work_done_progress_params: lsp::WorkDoneProgressParams { work_done_token },
+        };
+
+        Some(self.call::<lsp::request::InlineCompletionRequest>(params))
     }
 
     pub fn text_document_document_color(
