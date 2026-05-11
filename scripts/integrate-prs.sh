@@ -21,13 +21,24 @@ for cmd in yq jq gh git; do
   command -v "$cmd" >/dev/null 2>&1 || { echo "::error::missing required tool: $cmd"; exit 1; }
 done
 
-merged=()
-skipped=()
-
-git checkout -B "$NIGHTLY_BRANCH" "$UPSTREAM_REMOTE/$UPSTREAM_BRANCH"
-
+# Parse prs.yml while we're still in the master worktree (it doesn't exist on nightly).
 prs_json=$(yq -o=json '.prs' "$PRS_FILE")
 count=$(jq 'length' <<<"$prs_json")
+
+# Build nightly in a throw-away worktree so the master checkout (containing this
+# script, prs.yml, etc.) stays intact for subsequent workflow steps.
+WORKTREE=$(mktemp -d -t nightly-build-XXXXXX)
+cleanup() {
+  cd /tmp 2>/dev/null || true
+  git worktree remove --force "$WORKTREE" 2>/dev/null || true
+}
+trap cleanup EXIT
+
+git worktree add --force "$WORKTREE" -B "$NIGHTLY_BRANCH" "$UPSTREAM_REMOTE/$UPSTREAM_BRANCH"
+cd "$WORKTREE"
+
+merged=()
+skipped=()
 
 for ((i = 0; i < count; i++)); do
   entry=$(jq ".[$i]" <<<"$prs_json")

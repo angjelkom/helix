@@ -47,6 +47,8 @@ jobs:
         run: |
           git remote add upstream https://github.com/helix-editor/helix.git
           git fetch upstream master --no-tags
+          # Fetch existing nightly so --force-with-lease has a baseline to compare.
+          git fetch origin nightly --no-tags || true
 
       - name: Build nightly branch
         id: integrate

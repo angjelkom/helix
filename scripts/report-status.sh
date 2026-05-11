@@ -21,8 +21,8 @@ UPSTREAM_REPO="${UPSTREAM_REPO:-helix-editor/helix}"
 server="${GITHUB_SERVER_URL:-https://github.com}"
 run_url="$server/$GITHUB_REPOSITORY/actions/runs/${GITHUB_RUN_ID:-}"
 
-nightly_sha=$(git rev-parse HEAD)
-upstream_sha=$(git rev-parse "$UPSTREAM_REMOTE/$UPSTREAM_BRANCH")
+nightly_sha=$(git rev-parse "refs/heads/${NIGHTLY_BRANCH:-nightly}" 2>/dev/null || echo "(not built)")
+upstream_sha=$(git rev-parse "$UPSTREAM_REMOTE/$UPSTREAM_BRANCH" 2>/dev/null || echo "(unknown)")
 now=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
 
 format_list() {
