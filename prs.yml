@@ -11,4 +11,8 @@
 
 prs:
   - number: 8675
-    note: "replace upstream PR title here"
+    note: "Add Steel as an optional plugin system"
+  - number: 13133
+    note: "feat: Inline Git Blame"
+  - number: 14544
+    note: "implement file-watching based on filesentry"
