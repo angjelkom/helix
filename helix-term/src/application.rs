@@ -1739,12 +1739,70 @@ impl Application {
                     }),
                 }
             }
-            ControlRequest::GotoLine { .. } => {
-                Err(JsonRpcError {
-                    code: JsonRpcErrorCode::MethodNotFound,
-                    message: "goto-line handler not yet implemented".into(),
-                    data: None,
-                })
+            ControlRequest::GotoLine { line, column, path } => {
+                let (workspace, _) = helix_loader::find_workspace();
+                // resolve_buffer takes &Editor and gives us a &Document. We need
+                // to ALSO open the buffer if a path was given but isn't currently
+                // open — but for Phase 2c we keep it strict: error if not open,
+                // user is expected to call open-file first.
+                let doc_id = match resolve_buffer(&self.editor, &workspace, path.as_deref()) {
+                    Ok(doc) => doc.id(),
+                    Err(e) => {
+                        let _ = reply.send(Err(e));
+                        return;
+                    }
+                };
+
+                // Switch the focused view to this document if it's not already.
+                let current_doc_id = self
+                    .editor
+                    .documents
+                    .get(&self.editor.tree.get(self.editor.tree.focus).doc)
+                    .map(|d| d.id());
+                if Some(doc_id) != current_doc_id {
+                    self.editor.switch(doc_id, helix_view::editor::Action::Replace);
+                }
+
+                // Compute the char index of the target line/column.
+                let view = self.editor.tree.get(self.editor.tree.focus);
+                let view_id = view.id;
+                let doc = match self.editor.documents.get_mut(&doc_id) {
+                    Some(d) => d,
+                    None => {
+                        let _ = reply.send(Err(JsonRpcError {
+                            code: JsonRpcErrorCode::NoActiveDocument,
+                            message: "document gone after switch".into(),
+                            data: None,
+                        }));
+                        return;
+                    }
+                };
+                let text = doc.text();
+                // 1-indexed → 0-indexed; clamp to last line.
+                let target_line = line.saturating_sub(1).min(text.len_lines().saturating_sub(1));
+                let line_start_char = text.line_to_char(target_line);
+                let target_col = column.unwrap_or(1).saturating_sub(1);
+                // Cap at the line's length to avoid off-the-end columns.
+                let line_end_char = if target_line + 1 < text.len_lines() {
+                    text.line_to_char(target_line + 1).saturating_sub(1)
+                } else {
+                    text.len_chars()
+                };
+                let char_idx = (line_start_char + target_col).min(line_end_char);
+
+                let selection = helix_core::Selection::point(char_idx);
+                doc.set_selection(view_id, selection);
+
+                if let Err(e) = crate::context_logger::write_context_file(
+                    &self.editor,
+                    helix_context_schema::UpdateSource::McpCommand,
+                    None, // Task 6
+                ) {
+                    log::warn!("control-socket: snapshot rewrite failed after goto-line: {}", e);
+                }
+
+                let _ = reply.send(Ok(ControlResponse::Ok {}));
+                return;
             }
         };
 
