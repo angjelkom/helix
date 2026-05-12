@@ -4,5 +4,9 @@
 //! consume the file (e.g. the planned `helix-claude-mcp` bridge). Schema changes
 //! happen here once and surface as compile errors on both producers and consumers.
 
+mod source;
+
+pub use source::UpdateSource;
+
 pub const SCHEMA_VERSION: u32 = 2;
 pub const MIN_SUPPORTED_READER: u32 = 1;
