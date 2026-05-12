@@ -1821,6 +1821,41 @@ impl Application {
                 let _ = reply.send(Ok(ControlResponse::Ok {}));
                 return;
             }
+            ControlRequest::GetDiagnostics { .. } => {
+                Err(JsonRpcError {
+                    code: JsonRpcErrorCode::MethodNotFound,
+                    message: "get-diagnostics handler not yet implemented".into(),
+                    data: None,
+                })
+            }
+            ControlRequest::GetHoverAt { .. } => {
+                Err(JsonRpcError {
+                    code: JsonRpcErrorCode::MethodNotFound,
+                    message: "get-hover-at handler not yet implemented".into(),
+                    data: None,
+                })
+            }
+            ControlRequest::GetDefinitionAt { .. } => {
+                Err(JsonRpcError {
+                    code: JsonRpcErrorCode::MethodNotFound,
+                    message: "get-definition-at handler not yet implemented".into(),
+                    data: None,
+                })
+            }
+            ControlRequest::GetReferencesAt { .. } => {
+                Err(JsonRpcError {
+                    code: JsonRpcErrorCode::MethodNotFound,
+                    message: "get-references-at handler not yet implemented".into(),
+                    data: None,
+                })
+            }
+            ControlRequest::GetWorkspaceSymbols { .. } => {
+                Err(JsonRpcError {
+                    code: JsonRpcErrorCode::MethodNotFound,
+                    message: "get-workspace-symbols handler not yet implemented".into(),
+                    data: None,
+                })
+            }
         };
 
         let _ = reply.send(resp);
