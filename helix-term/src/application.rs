@@ -1842,12 +1842,59 @@ impl Application {
                 let _ = reply.send(Ok(ControlResponse::Ok {}));
                 return;
             }
-            ControlRequest::GetDiagnostics { .. } => {
-                Err(JsonRpcError {
-                    code: JsonRpcErrorCode::MethodNotFound,
-                    message: "get-diagnostics handler not yet implemented".into(),
-                    data: None,
-                })
+            ControlRequest::GetDiagnostics { path } => {
+                let (workspace, _) = helix_loader::find_workspace();
+                let doc = match resolve_buffer(&self.editor, &workspace, path.as_deref()) {
+                    Ok(d) => d,
+                    Err(e) => {
+                        let _ = reply.send(Err(e));
+                        return;
+                    }
+                };
+                let Some(doc_uri) = doc.uri() else {
+                    let _ = reply.send(Err(JsonRpcError {
+                        code: JsonRpcErrorCode::NoActiveDocument,
+                        message: "document has no URI (scratch buffer?)".into(),
+                        data: None,
+                    }));
+                    return;
+                };
+
+                let mut diagnostics_out: Vec<helix_context_schema::LspDiagnostic> = Vec::new();
+                if let Some(entries) = self.editor.diagnostics.get(&doc_uri) {
+                    for (diag, _provider) in entries.iter() {
+                        diagnostics_out.push(helix_context_schema::LspDiagnostic {
+                            range: helix_context_schema::LspRange {
+                                start: helix_context_schema::LspPosition {
+                                    line: diag.range.start.line,
+                                    character: diag.range.start.character,
+                                },
+                                end: helix_context_schema::LspPosition {
+                                    line: diag.range.end.line,
+                                    character: diag.range.end.character,
+                                },
+                            },
+                            severity: diag.severity.map(|s| match s {
+                                lsp::DiagnosticSeverity::ERROR => "error",
+                                lsp::DiagnosticSeverity::WARNING => "warning",
+                                lsp::DiagnosticSeverity::INFORMATION => "information",
+                                lsp::DiagnosticSeverity::HINT => "hint",
+                                _ => "unknown",
+                            }.into()),
+                            code: diag.code.as_ref().map(|c| match c {
+                                lsp::NumberOrString::Number(n) => n.to_string(),
+                                lsp::NumberOrString::String(s) => s.clone(),
+                            }),
+                            source: diag.source.clone(),
+                            message: diag.message.clone(),
+                        });
+                    }
+                }
+
+                let _ = reply.send(Ok(ControlResponse::GetDiagnostics {
+                    diagnostics: diagnostics_out,
+                }));
+                return;
             }
             ControlRequest::GetHoverAt { .. } => {
                 Err(JsonRpcError {
