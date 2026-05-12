@@ -1,12 +1,15 @@
 [package]
 name = "helix-context-schema"
 description = "JSON snapshot schema shared between Helix and external context-aware tooling."
-version = "25.7.1"
-authors = ["Helix fork contributors"]
-edition = "2021"
-license = "MPL-2.0"
-homepage = "https://helix-editor.com"
 include = ["src/**/*"]
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+categories.workspace = true
+repository.workspace = true
+homepage.workspace = true
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
