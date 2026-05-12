@@ -11,7 +11,8 @@ mod source;
 mod types;
 
 pub use protocol::{
-    ClientInfo, ControlRequest, ControlResponse, LineRange, ServerCapabilities, ServerInfo,
+    ClientInfo, ControlRequest, ControlResponse, LineRange, LspDiagnostic, LspHover,
+    LspLocation, LspPosition, LspRange, LspSymbolInfo, ServerCapabilities, ServerInfo,
 };
 pub use protocol_error::{JsonRpcError, JsonRpcErrorCode};
 pub use snapshot::ContextSnapshot;
