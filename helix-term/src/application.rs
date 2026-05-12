@@ -450,6 +450,9 @@ impl Application {
                     self.jobs.handle_local_callback(&mut self.editor, &mut self.compositor, callback);
                     self.render().await;
                 }
+                Some(event) = recv_control_request(&mut self.control_request_rx) => {
+                    self.handle_control_request(event);
+                }
                 event = self.editor.wait_event() => {
                     let _idle_handled = self.handle_editor_event(event).await;
 
@@ -459,9 +462,6 @@ impl Application {
                             return true;
                         }
                     }
-                }
-                Some(event) = recv_control_request(&mut self.control_request_rx) => {
-                    self.handle_control_request(event);
                 }
             }
 
@@ -1576,11 +1576,26 @@ impl Application {
                 })
             }
             ControlRequest::CurrentState {} => {
-                Err(JsonRpcError {
-                    code: JsonRpcErrorCode::MethodNotFound,
-                    message: "current-state handler not yet implemented".into(),
-                    data: None,
-                })
+                let (workspace, is_cwd_fallback) = helix_loader::find_workspace();
+                if is_cwd_fallback {
+                    Err(JsonRpcError {
+                        code: JsonRpcErrorCode::NoActiveDocument,
+                        message: "no workspace marker — refusing to report state".into(),
+                        data: None,
+                    })
+                } else {
+                    let cfg = self.editor.config().context_logger.clone();
+                    let snap = crate::context_logger::build_snapshot(
+                        &self.editor,
+                        &workspace,
+                        &cfg,
+                        helix_context_schema::UpdateSource::Manual,
+                    );
+                    Ok(ControlResponse::CurrentState {
+                        active: snap.active,
+                        mode: snap.mode,
+                    })
+                }
             }
             ControlRequest::GetOpenBuffers {} => {
                 Err(JsonRpcError {
