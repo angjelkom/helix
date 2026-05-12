@@ -56,7 +56,10 @@ fn handle_initialize(
                 "get-open-buffers".into(),
                 "get-buffer-text".into(),
             ],
-            write_methods: vec![],
+            write_methods: vec![
+                "open-file".into(),
+                "goto-line".into(),
+            ],
         },
     })
 }
@@ -89,7 +92,21 @@ mod tests {
         assert!(methods.contains(&"current-state".to_string()), "missing current-state");
         assert!(methods.contains(&"get-open-buffers".to_string()), "missing get-open-buffers");
         assert!(methods.contains(&"get-buffer-text".to_string()), "missing get-buffer-text");
-        assert!(capabilities.write_methods.is_empty(), "write methods come in Phase 2c");
+    }
+
+    #[test]
+    fn initialize_advertises_phase_2c_write_methods() {
+        let req = ControlRequest::Initialize {
+            protocol_version: "1.0".into(),
+            client_info: ClientInfo { name: "t".into(), version: "0.1".into() },
+        };
+        let resp = try_dispatch_inline(&req).unwrap().unwrap();
+        let ControlResponse::Initialize { capabilities, .. } = resp else {
+            panic!("expected Initialize response");
+        };
+        let writes = &capabilities.write_methods;
+        assert!(writes.contains(&"open-file".to_string()), "missing open-file");
+        assert!(writes.contains(&"goto-line".to_string()), "missing goto-line");
     }
 
     #[test]
