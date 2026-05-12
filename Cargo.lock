@@ -2000,6 +2000,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "helix-context-schema"
+version = "25.7.1"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "helix-core"
 version = "25.7.1"
 dependencies = [
@@ -2171,6 +2179,7 @@ dependencies = [
  "grep-matcher",
  "grep-regex",
  "grep-searcher",
+ "helix-context-schema",
  "helix-core",
  "helix-dap",
  "helix-event",
