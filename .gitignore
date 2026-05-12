@@ -5,3 +5,4 @@ result
 runtime/grammars
 .DS_Store
 .claude
+.helix/
