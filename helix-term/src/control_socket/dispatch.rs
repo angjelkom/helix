@@ -22,7 +22,9 @@ pub fn try_dispatch_inline(
         // Returning None routes them through the event-loop dispatch.
         ControlRequest::CurrentState {}
         | ControlRequest::GetOpenBuffers {}
-        | ControlRequest::GetBufferText { .. } => None,
+        | ControlRequest::GetBufferText { .. }
+        | ControlRequest::OpenFile { .. }
+        | ControlRequest::GotoLine { .. } => None,
     }
 }
 
