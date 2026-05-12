@@ -88,7 +88,9 @@ mod tests {
 
         let mut reader = FrameReader::new(a_read);
         let req = reader.read_request().await.unwrap().expect("expected a request");
-        let ControlRequest::Initialize { protocol_version, client_info } = req;
+        let ControlRequest::Initialize { protocol_version, client_info } = req else {
+            panic!("expected Initialize variant");
+        };
         assert_eq!(protocol_version, "1.0");
         assert_eq!(client_info.name, "test");
 

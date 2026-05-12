@@ -36,6 +36,104 @@ use helix_context_schema::{
     PROTOCOL_VERSION,
 };
 
+use helix_context_schema::{Active, Cursor, LineRange, OpenBuffer};
+
+#[test]
+fn current_state_request_serializes_with_empty_params() {
+    let req = ControlRequest::CurrentState {};
+    let j = serde_json::to_value(&req).unwrap();
+    assert_eq!(j["method"], "current-state");
+    assert_eq!(j["params"], serde_json::json!({}));
+}
+
+#[test]
+fn current_state_response_round_trips() {
+    let resp = ControlResponse::CurrentState {
+        active: Active {
+            path: Some("src/main.rs".into()),
+            path_abs: Some("/repo/src/main.rs".into()),
+            language: Some("rust".into()),
+            modified: false,
+            line_count: 100,
+            cursors: vec![Cursor { primary: true, line: 1, column: 1 }],
+            selections: vec![],
+            text: None,
+        },
+        mode: "normal".into(),
+    };
+    let j = serde_json::to_value(&resp).unwrap();
+    assert_eq!(j["method"], "current-state");
+    assert_eq!(j["result"]["mode"], "normal");
+    assert_eq!(j["result"]["active"]["language"], "rust");
+
+    let back: ControlResponse = serde_json::from_value(j).unwrap();
+    let ControlResponse::CurrentState { mode, active } = back else {
+        panic!("wrong variant");
+    };
+    assert_eq!(mode, "normal");
+    assert_eq!(active.language.as_deref(), Some("rust"));
+}
+
+#[test]
+fn get_open_buffers_request_and_response_round_trip() {
+    let req = ControlRequest::GetOpenBuffers {};
+    let j = serde_json::to_value(&req).unwrap();
+    assert_eq!(j["method"], "get-open-buffers");
+
+    let resp = ControlResponse::GetOpenBuffers {
+        buffers: vec![OpenBuffer {
+            path: Some("src/lib.rs".into()),
+            language: Some("rust".into()),
+            modified: false,
+        }],
+    };
+    let j = serde_json::to_value(&resp).unwrap();
+    assert_eq!(j["method"], "get-open-buffers");
+    assert_eq!(j["result"]["buffers"][0]["path"], "src/lib.rs");
+}
+
+#[test]
+fn get_buffer_text_request_with_path_and_range() {
+    let req = ControlRequest::GetBufferText {
+        path: Some("src/main.rs".into()),
+        range: Some(LineRange { start_line: 10, end_line: 20 }),
+    };
+    let j = serde_json::to_value(&req).unwrap();
+    assert_eq!(j["method"], "get-buffer-text");
+    assert_eq!(j["params"]["path"], "src/main.rs");
+    assert_eq!(j["params"]["range"]["start_line"], 10);
+    assert_eq!(j["params"]["range"]["end_line"], 20);
+
+    let back: ControlRequest = serde_json::from_value(j).unwrap();
+    let ControlRequest::GetBufferText { path, range } = back else {
+        panic!("wrong variant");
+    };
+    assert_eq!(path.as_deref(), Some("src/main.rs"));
+    let r = range.expect("range expected");
+    assert_eq!(r.start_line, 10);
+    assert_eq!(r.end_line, 20);
+}
+
+#[test]
+fn get_buffer_text_request_with_no_path_omits_field() {
+    let req = ControlRequest::GetBufferText { path: None, range: None };
+    let j = serde_json::to_value(&req).unwrap();
+    assert!(j["params"].get("path").is_none() || j["params"]["path"].is_null());
+    assert!(j["params"].get("range").is_none() || j["params"]["range"].is_null());
+}
+
+#[test]
+fn get_buffer_text_response_round_trips() {
+    let resp = ControlResponse::GetBufferText {
+        text: "fn main() {}".into(),
+        language: Some("rust".into()),
+        line_count: 1,
+    };
+    let j = serde_json::to_value(&resp).unwrap();
+    assert_eq!(j["result"]["text"], "fn main() {}");
+    assert_eq!(j["result"]["line_count"], 1);
+}
+
 #[test]
 fn initialize_request_serializes_with_method_tag() {
     let req = ControlRequest::Initialize {
@@ -61,7 +159,9 @@ fn control_request_deserializes_initialize_from_method_tag() {
         }
     });
     let req: ControlRequest = serde_json::from_value(json).unwrap();
-    let ControlRequest::Initialize { protocol_version, client_info } = req;
+    let ControlRequest::Initialize { protocol_version, client_info } = req else {
+        panic!("expected Initialize variant");
+    };
     assert_eq!(protocol_version, "1.0");
     assert_eq!(client_info.name, "test");
 }
@@ -84,6 +184,8 @@ fn initialize_response_round_trips() {
     assert_eq!(j["result"]["protocol_version"], "1.0");
     assert_eq!(j["result"]["helix_version"], "25.7.1");
     let back: ControlResponse = serde_json::from_value(j).unwrap();
-    let ControlResponse::Initialize { helix_version, .. } = back;
+    let ControlResponse::Initialize { helix_version, .. } = back else {
+        panic!("expected Initialize variant");
+    };
     assert_eq!(helix_version, "25.7.1");
 }

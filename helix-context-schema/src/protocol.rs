@@ -34,6 +34,14 @@ pub struct ServerCapabilities {
     pub write_methods: Vec<String>,
 }
 
+/// A 1-indexed, inclusive line range. Matches the indexing used throughout
+/// the snapshot schema.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LineRange {
+    pub start_line: usize,
+    pub end_line: usize,
+}
+
 /// All possible requests the control socket accepts. The wire format uses
 /// JSON-RPC 2.0 with `method` and `params` keys; serde's `tag = "method"`
 /// generates exactly that shape, and the variant name (kebab-cased) is the
@@ -44,6 +52,14 @@ pub enum ControlRequest {
     Initialize {
         protocol_version: String,
         client_info: ClientInfo,
+    },
+    CurrentState {},
+    GetOpenBuffers {},
+    GetBufferText {
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        path: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        range: Option<LineRange>,
     },
 }
 
@@ -58,5 +74,18 @@ pub enum ControlResponse {
         helix_version: String,
         server_info: ServerInfo,
         capabilities: ServerCapabilities,
+    },
+    CurrentState {
+        active: crate::types::Active,
+        mode: String,
+    },
+    GetOpenBuffers {
+        buffers: Vec<crate::types::OpenBuffer>,
+    },
+    GetBufferText {
+        text: String,
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        language: Option<String>,
+        line_count: usize,
     },
 }
