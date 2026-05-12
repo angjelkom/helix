@@ -24,7 +24,12 @@ pub fn try_dispatch_inline(
         | ControlRequest::GetOpenBuffers {}
         | ControlRequest::GetBufferText { .. }
         | ControlRequest::OpenFile { .. }
-        | ControlRequest::GotoLine { .. } => None,
+        | ControlRequest::GotoLine { .. }
+        | ControlRequest::GetDiagnostics { .. }
+        | ControlRequest::GetHoverAt { .. }
+        | ControlRequest::GetDefinitionAt { .. }
+        | ControlRequest::GetReferencesAt { .. }
+        | ControlRequest::GetWorkspaceSymbols { .. } => None,
     }
 }
 

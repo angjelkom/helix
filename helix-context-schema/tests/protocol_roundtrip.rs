@@ -332,3 +332,133 @@ fn lsp_symbol_info_round_trips() {
     let back: LspSymbolInfo = serde_json::from_value(j).unwrap();
     assert_eq!(back.kind, "function");
 }
+
+#[test]
+fn get_diagnostics_request_with_no_path() {
+    let req = ControlRequest::GetDiagnostics { path: None };
+    let j = serde_json::to_value(&req).unwrap();
+    assert_eq!(j["method"], "get-diagnostics");
+    assert!(j["params"].get("path").is_none() || j["params"]["path"].is_null());
+}
+
+#[test]
+fn get_hover_at_request_round_trips() {
+    let req = ControlRequest::GetHoverAt {
+        line: 10,
+        column: 5,
+        path: Some("src/main.rs".into()),
+        allow_insert_mode: Some(false),
+    };
+    let j = serde_json::to_value(&req).unwrap();
+    assert_eq!(j["method"], "get-hover-at");
+    assert_eq!(j["params"]["line"], 10);
+    let back: ControlRequest = serde_json::from_value(j).unwrap();
+    let ControlRequest::GetHoverAt { line, column, .. } = back else {
+        panic!("wrong variant");
+    };
+    assert_eq!(line, 10);
+    assert_eq!(column, 5);
+}
+
+#[test]
+fn get_definition_at_request_omits_optional_fields() {
+    let req = ControlRequest::GetDefinitionAt {
+        line: 1,
+        column: 1,
+        path: None,
+        allow_insert_mode: None,
+    };
+    let j = serde_json::to_value(&req).unwrap();
+    assert_eq!(j["method"], "get-definition-at");
+    assert!(j["params"].get("path").is_none() || j["params"]["path"].is_null());
+    assert!(
+        j["params"].get("allow_insert_mode").is_none()
+            || j["params"]["allow_insert_mode"].is_null()
+    );
+}
+
+#[test]
+fn get_references_at_request_with_include_declaration() {
+    let req = ControlRequest::GetReferencesAt {
+        line: 5,
+        column: 3,
+        path: None,
+        allow_insert_mode: None,
+        include_declaration: Some(true),
+    };
+    let j = serde_json::to_value(&req).unwrap();
+    assert_eq!(j["params"]["include_declaration"], true);
+}
+
+#[test]
+fn get_workspace_symbols_request() {
+    let req = ControlRequest::GetWorkspaceSymbols { query: "main".into() };
+    let j = serde_json::to_value(&req).unwrap();
+    assert_eq!(j["method"], "get-workspace-symbols");
+    assert_eq!(j["params"]["query"], "main");
+}
+
+#[test]
+fn hover_response_with_some_hover() {
+    let resp = ControlResponse::GetHoverAt {
+        hover: Some(LspHover {
+            contents: "fn main()".into(),
+            range: None,
+        }),
+    };
+    let j = serde_json::to_value(&resp).unwrap();
+    assert_eq!(j["method"], "get-hover-at");
+    assert_eq!(j["result"]["hover"]["contents"], "fn main()");
+}
+
+#[test]
+fn hover_response_with_none() {
+    let resp = ControlResponse::GetHoverAt { hover: None };
+    let j = serde_json::to_value(&resp).unwrap();
+    assert!(j["result"]["hover"].is_null());
+}
+
+#[test]
+fn definition_response_with_locations() {
+    let resp = ControlResponse::GetDefinitionAt {
+        locations: vec![LspLocation {
+            path: "src/lib.rs".into(),
+            path_abs: "/repo/src/lib.rs".into(),
+            range: LspRange {
+                start: LspPosition { line: 10, character: 0 },
+                end: LspPosition { line: 12, character: 1 },
+            },
+        }],
+    };
+    let j = serde_json::to_value(&resp).unwrap();
+    assert_eq!(j["result"]["locations"][0]["path"], "src/lib.rs");
+}
+
+#[test]
+fn diagnostics_response_with_empty_list() {
+    let resp = ControlResponse::GetDiagnostics { diagnostics: vec![] };
+    let j = serde_json::to_value(&resp).unwrap();
+    assert_eq!(j["method"], "get-diagnostics");
+    assert_eq!(j["result"]["diagnostics"], serde_json::json!([]));
+}
+
+#[test]
+fn workspace_symbols_response_round_trips() {
+    let resp = ControlResponse::GetWorkspaceSymbols {
+        symbols: vec![LspSymbolInfo {
+            name: "main".into(),
+            kind: "function".into(),
+            location: LspLocation {
+                path: "src/main.rs".into(),
+                path_abs: "/repo/src/main.rs".into(),
+                range: LspRange {
+                    start: LspPosition { line: 0, character: 3 },
+                    end: LspPosition { line: 0, character: 7 },
+                },
+            },
+            container_name: None,
+        }],
+    };
+    let j = serde_json::to_value(&resp).unwrap();
+    assert_eq!(j["result"]["symbols"][0]["kind"], "function");
+}
