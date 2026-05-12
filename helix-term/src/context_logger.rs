@@ -104,8 +104,11 @@ fn build_snapshot(
             let text_field = if cfg.include_selection_text {
                 let raw = slice.slice(from..to).to_string();
                 let truncated = if raw.len() > cfg.max_selection_bytes {
-                    let mut s: String =
-                        raw.chars().take(cfg.max_selection_bytes).collect();
+                    let mut end = cfg.max_selection_bytes.min(raw.len());
+                    while end > 0 && !raw.is_char_boundary(end) {
+                        end -= 1;
+                    }
+                    let mut s = String::from(&raw[..end]);
                     s.push_str("\n…[truncated by context_logger]");
                     s
                 } else {
