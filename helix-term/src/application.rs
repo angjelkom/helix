@@ -102,6 +102,18 @@ fn start_control_socket(
     Ok(resolved_for_cleanup)
 }
 
+/// Awaits a control request from the optional channel. If the channel is
+/// `None` (control socket disabled) returns a future that never resolves —
+/// so the `select!` arm is effectively disabled.
+async fn recv_control_request(
+    rx: &mut Option<tokio::sync::mpsc::UnboundedReceiver<helix_view::editor::EditorEvent>>,
+) -> Option<helix_view::editor::EditorEvent> {
+    match rx {
+        Some(rx) => rx.recv().await,
+        None => std::future::pending().await,
+    }
+}
+
 pub struct Application {
     compositor: Compositor,
     terminal: Terminal,
@@ -447,6 +459,9 @@ impl Application {
                             return true;
                         }
                     }
+                }
+                Some(event) = recv_control_request(&mut self.control_request_rx) => {
+                    self.handle_control_request(event);
                 }
             }
 
@@ -803,10 +818,16 @@ impl Application {
                     return true;
                 }
             }
-            EditorEvent::ControlRequest { request: _, reply } => {
-                // TODO(control-socket): dispatch to the real handler once it is
-                // implemented. For now, dropping `reply` signals InternalError
-                // to the sender side via RecvError::Closed.
+            EditorEvent::ControlRequest { reply, .. } => {
+                // ControlRequest events are routed through control_request_rx
+                // in event_loop_until_idle, not through editor.wait_event(). If
+                // we ever hit this arm, the variant came from somewhere we didn't
+                // expect — log and drop the reply (surfaces as InternalError on
+                // the client).
+                log::error!(
+                    "control-socket: ControlRequest reached handle_editor_event; \
+                     this should not happen — please report",
+                );
                 drop(reply);
             }
         }
@@ -1548,6 +1569,51 @@ impl Application {
         }
 
         errs
+    }
+
+    fn handle_control_request(&mut self, event: helix_view::editor::EditorEvent) {
+        use helix_context_schema::{
+            ControlRequest, ControlResponse, JsonRpcError, JsonRpcErrorCode,
+        };
+
+        let helix_view::editor::EditorEvent::ControlRequest { request, reply } = event else {
+            log::error!("control-socket: handle_control_request got non-ControlRequest event");
+            return;
+        };
+
+        let resp: Result<ControlResponse, JsonRpcError> = match request {
+            ControlRequest::Initialize { .. } => {
+                // Shouldn't happen — Initialize is inline-dispatched.
+                Err(JsonRpcError {
+                    code: JsonRpcErrorCode::InternalError,
+                    message: "Initialize should be handled inline".into(),
+                    data: None,
+                })
+            }
+            ControlRequest::CurrentState {} => {
+                Err(JsonRpcError {
+                    code: JsonRpcErrorCode::MethodNotFound,
+                    message: "current-state handler not yet implemented".into(),
+                    data: None,
+                })
+            }
+            ControlRequest::GetOpenBuffers {} => {
+                Err(JsonRpcError {
+                    code: JsonRpcErrorCode::MethodNotFound,
+                    message: "get-open-buffers handler not yet implemented".into(),
+                    data: None,
+                })
+            }
+            ControlRequest::GetBufferText { .. } => {
+                Err(JsonRpcError {
+                    code: JsonRpcErrorCode::MethodNotFound,
+                    message: "get-buffer-text handler not yet implemented".into(),
+                    data: None,
+                })
+            }
+        };
+
+        let _ = reply.send(resp);
     }
 }
 
