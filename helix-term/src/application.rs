@@ -70,6 +70,37 @@ type TerminalEvent = crossterm::event::Event;
 
 type Terminal = tui::terminal::Terminal<TerminalBackend>;
 
+/// Start the control socket if config enables it. Returns the resolved path
+/// so the caller can unlink it on shutdown.
+fn start_control_socket(
+    editor: &helix_view::Editor,
+) -> std::io::Result<crate::control_socket::path::Resolved> {
+    use crate::control_socket::{lifecycle, path, server};
+
+    let (workspace, is_cwd_fallback) = helix_loader::find_workspace();
+    if is_cwd_fallback {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "no workspace marker — refusing to bind control socket in fallback directory",
+        ));
+    }
+
+    let cfg = &editor.config().control_socket;
+    let override_path = if cfg.path.as_os_str().is_empty() {
+        None
+    } else {
+        Some(cfg.path.as_path())
+    };
+
+    let resolved = path::resolve_socket_path(&workspace, std::process::id(), override_path)?;
+    let binding = lifecycle::bind_socket(resolved)?;
+    let (listener, resolved_for_cleanup) = binding.split();
+
+    tokio::spawn(server::run_accept_loop(listener));
+
+    Ok(resolved_for_cleanup)
+}
+
 pub struct Application {
     compositor: Compositor,
     terminal: Terminal,
@@ -82,6 +113,11 @@ pub struct Application {
     lsp_progress: LspProgressMap,
 
     theme_mode: Option<theme::Mode>,
+
+    /// Set when [editor.control-socket] enabled = true. The accept loop
+    /// runs as a tokio task; this stores the resolved path so we can
+    /// unlink the socket files on shutdown.
+    control_socket_binding: Option<crate::control_socket::path::Resolved>,
 }
 
 #[cfg(feature = "integration")]
@@ -274,6 +310,18 @@ impl Application {
         ])
         .context("build signal handler")?;
 
+        let control_socket_binding = if editor.config().control_socket.enabled {
+            match start_control_socket(&editor) {
+                Ok(resolved) => Some(resolved),
+                Err(e) => {
+                    log::warn!("control-socket: failed to start: {}", e);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
         let app = Self {
             compositor,
             terminal,
@@ -283,6 +331,7 @@ impl Application {
             jobs,
             lsp_progress: LspProgressMap::new(),
             theme_mode,
+            control_socket_binding,
         };
 
         Ok(app)
@@ -1465,6 +1514,12 @@ impl Application {
             errs.push(anyhow::format_err!(
                 "Timed out waiting for language servers to shutdown"
             ));
+        }
+
+        if let Some(resolved) = self.control_socket_binding.take() {
+            if let Err(e) = crate::control_socket::lifecycle::unlink(&resolved) {
+                log::warn!("control-socket: failed to unlink at shutdown: {}", e);
+            }
         }
 
         errs
