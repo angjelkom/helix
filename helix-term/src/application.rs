@@ -1689,12 +1689,40 @@ impl Application {
                     }
                 }
             }
-            ControlRequest::OpenFile { .. } => {
-                Err(JsonRpcError {
-                    code: JsonRpcErrorCode::MethodNotFound,
-                    message: "open-file handler not yet implemented".into(),
-                    data: None,
-                })
+            ControlRequest::OpenFile { path } => {
+                let (workspace, is_cwd_fallback) = helix_loader::find_workspace();
+                let resolved_path: std::path::PathBuf = {
+                    let p = std::path::Path::new(&path);
+                    if p.is_absolute() {
+                        p.to_path_buf()
+                    } else if is_cwd_fallback {
+                        // No workspace marker — interpret relative path against CWD
+                        // since there's no better anchor.
+                        std::env::current_dir().unwrap_or_default().join(p)
+                    } else {
+                        workspace.join(p)
+                    }
+                };
+
+                match self.editor.open(&resolved_path, helix_view::editor::Action::Replace) {
+                    Ok(_) => {
+                        // Snapshot rewrite per spec §5.5 — direct call, not via
+                        // helix_event::dispatch, to avoid firing Steel hooks.
+                        if let Err(e) = crate::context_logger::write_context_file(
+                            &self.editor,
+                            helix_context_schema::UpdateSource::McpCommand,
+                            None, // Task 6 fills in Some(Instance)
+                        ) {
+                            log::warn!("control-socket: snapshot rewrite failed after open-file: {}", e);
+                        }
+                        Ok(ControlResponse::Ok {})
+                    }
+                    Err(e) => Err(JsonRpcError {
+                        code: JsonRpcErrorCode::InternalError,
+                        message: format!("failed to open {}: {}", resolved_path.display(), e),
+                        data: None,
+                    }),
+                }
             }
             ControlRequest::GotoLine { .. } => {
                 Err(JsonRpcError {
