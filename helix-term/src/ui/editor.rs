@@ -1698,6 +1698,7 @@ impl Component for EditorView {
                 if let Err(e) = crate::context_logger::write_context_file(
                     context.editor,
                     UpdateSource::FocusLost,
+                    None,
                 ) {
                     log::warn!("context_logger: failed to write snapshot: {}", e);
                 }
