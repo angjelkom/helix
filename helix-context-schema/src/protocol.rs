@@ -127,6 +127,39 @@ pub enum ControlRequest {
         #[serde(skip_serializing_if = "Option::is_none", default)]
         path: Option<String>,
     },
+    GetDiagnostics {
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        path: Option<String>,
+    },
+    GetHoverAt {
+        line: usize,
+        column: usize,
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        path: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        allow_insert_mode: Option<bool>,
+    },
+    GetDefinitionAt {
+        line: usize,
+        column: usize,
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        path: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        allow_insert_mode: Option<bool>,
+    },
+    GetReferencesAt {
+        line: usize,
+        column: usize,
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        path: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        allow_insert_mode: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        include_declaration: Option<bool>,
+    },
+    GetWorkspaceSymbols {
+        query: String,
+    },
 }
 
 /// All possible successful responses. The variant name (kebab-cased) matches
@@ -158,4 +191,19 @@ pub enum ControlResponse {
     /// goto-line). Carries no payload — the client used the tool, the tool
     /// worked, that's all there is to say.
     Ok {},
+    GetDiagnostics {
+        diagnostics: Vec<LspDiagnostic>,
+    },
+    GetHoverAt {
+        hover: Option<LspHover>,
+    },
+    GetDefinitionAt {
+        locations: Vec<LspLocation>,
+    },
+    GetReferencesAt {
+        locations: Vec<LspLocation>,
+    },
+    GetWorkspaceSymbols {
+        symbols: Vec<LspSymbolInfo>,
+    },
 }
