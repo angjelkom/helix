@@ -72,7 +72,7 @@ pub fn write_context_file(editor: &Editor, source: UpdateSource) -> std::io::Res
     Ok(())
 }
 
-fn build_snapshot(
+pub(crate) fn build_snapshot(
     editor: &Editor,
     workspace: &Path,
     cfg: &ContextLoggerConfig,
