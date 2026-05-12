@@ -372,6 +372,11 @@ pub struct Config {
     /// Time delay defaults to false with 3000ms delay. Focus lost defaults to false.
     #[serde(deserialize_with = "deserialize_auto_save")]
     pub auto_save: AutoSave,
+    /// Write a JSON snapshot of editor state to `<workspace>/.helix/context.json`
+    /// every time the terminal loses focus, so external tools (e.g. an AI assistant
+    /// running in another pane) can pick up where you are.
+    #[serde(default)]
+    pub context_logger: ContextLoggerConfig,
     /// Set a global text_width
     pub text_width: usize,
     /// Time in milliseconds since last keypress before idle timers trigger.
@@ -1059,6 +1064,43 @@ fn default_auto_save_delay() -> u64 {
     DEFAULT_AUTO_SAVE_DELAY
 }
 
+/// Configuration for the focus-loss context logger.
+///
+/// When enabled, every time the terminal loses focus (e.g. user switches to
+/// another pane in tmux/Kitty), Helix writes a JSON snapshot of the current
+/// editor state to a file. External tools can read this file to pick up the
+/// user's current project, file, cursor, and selection without being told.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case", default)]
+pub struct ContextLoggerConfig {
+    /// Whether the logger is enabled. Defaults to false.
+    pub enabled: bool,
+    /// Path for the snapshot file. Relative paths are resolved against the
+    /// workspace root (the directory returned by `find_workspace`).
+    /// Defaults to `.helix/context.json`.
+    pub path: PathBuf,
+    /// When a visual selection exists, also include its text content.
+    /// Defaults to true. Set to false if you don't want selected source code
+    /// to land in the snapshot file.
+    pub include_selection_text: bool,
+    /// Include the full buffer text. Defaults to false (privacy + size).
+    pub include_buffer_text: bool,
+    /// Maximum bytes of selected text to include per selection. Defaults to 8192.
+    pub max_selection_bytes: usize,
+}
+
+impl Default for ContextLoggerConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            path: PathBuf::from(".helix/context.json"),
+            include_selection_text: true,
+            include_buffer_text: false,
+            max_selection_bytes: 8192,
+        }
+    }
+}
+
 fn deserialize_auto_save<'de, D>(deserializer: D) -> Result<AutoSave, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -1210,6 +1252,7 @@ impl Default for Config {
             auto_format: true,
             default_yank_register: '"',
             auto_save: AutoSave::default(),
+            context_logger: ContextLoggerConfig::default(),
             idle_timeout: Duration::from_millis(250),
             completion_timeout: Duration::from_millis(250),
             inline_completion_timeout: Duration::from_millis(150),
