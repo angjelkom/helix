@@ -522,6 +522,7 @@ impl Application {
                 }
                 Some(event) = recv_control_request(&mut self.control_request_rx) => {
                     self.handle_control_request(event);
+                    self.render().await;
                 }
                 event = self.editor.wait_event() => {
                     let _idle_handled = self.handle_editor_event(event).await;
