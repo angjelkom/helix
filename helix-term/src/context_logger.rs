@@ -17,7 +17,11 @@ use helix_view::current_ref;
 use helix_view::editor::ContextLoggerConfig;
 use helix_view::Editor;
 
-pub fn write_context_file(editor: &Editor, source: UpdateSource) -> std::io::Result<()> {
+pub fn write_context_file(
+    editor: &Editor,
+    source: UpdateSource,
+    instance: Option<helix_context_schema::Instance>,
+) -> std::io::Result<()> {
     let cfg = editor.config().context_logger.clone();
     if !cfg.enabled {
         return Ok(());
@@ -39,7 +43,7 @@ pub fn write_context_file(editor: &Editor, source: UpdateSource) -> std::io::Res
         workspace.join(&cfg.path)
     };
 
-    let snapshot = build_snapshot(editor, &workspace, &cfg, source);
+    let snapshot = build_snapshot(editor, &workspace, &cfg, source, instance);
     let payload = serde_json::to_vec_pretty(&snapshot)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
 
@@ -77,6 +81,7 @@ pub(crate) fn build_snapshot(
     workspace: &Path,
     cfg: &ContextLoggerConfig,
     source: UpdateSource,
+    instance: Option<helix_context_schema::Instance>,
 ) -> ContextSnapshot {
     let (view, doc) = current_ref!(editor);
     let text = doc.text();
@@ -170,7 +175,7 @@ pub(crate) fn build_snapshot(
         min_supported_reader: MIN_SUPPORTED_READER,
         timestamp: chrono::Utc::now().to_rfc3339(),
         last_update_source: source,
-        instance: None,
+        instance,
         project_root: workspace.to_string_lossy().into_owned(),
         mode: editor.mode.to_string(),
         active,
