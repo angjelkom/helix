@@ -28,7 +28,7 @@ pub async fn run_accept_loop(listener: UnixListener, control_tx: UnboundedSender
 
 async fn handle_connection(
     stream: tokio::net::UnixStream,
-    _control_tx: UnboundedSender<EditorEvent>,
+    control_tx: UnboundedSender<EditorEvent>,
 ) {
     let (read_half, write_half) = stream.into_split();
     let mut reader = FrameReader::new(read_half);
@@ -55,11 +55,31 @@ async fn handle_connection(
 
         let resp = match try_dispatch_inline(&req) {
             Some(resp) => resp,
-            None => Err(helix_context_schema::JsonRpcError {
-                code: helix_context_schema::JsonRpcErrorCode::MethodNotFound,
-                message: "method not available in Phase 2a".into(),
-                data: None,
-            }),
+            None => {
+                // Forward into the main event loop via the channel.
+                let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
+                let event = helix_view::editor::EditorEvent::ControlRequest {
+                    request: req,
+                    reply: reply_tx,
+                };
+                if control_tx.send(event).is_err() {
+                    // Receiver dropped — editor is shutting down.
+                    log::warn!("control-socket: control_tx send failed; editor likely shutting down");
+                    break;
+                }
+                match reply_rx.await {
+                    Ok(r) => r,
+                    Err(_) => {
+                        // Sender dropped without sending — handler panicked or
+                        // skipped the reply (shouldn't happen, but defensively).
+                        Err(helix_context_schema::JsonRpcError {
+                            code: helix_context_schema::JsonRpcErrorCode::InternalError,
+                            message: "no reply from editor".into(),
+                            data: None,
+                        })
+                    }
+                }
+            }
         };
 
         if let Err(e) = writer.write_response(&resp).await {
