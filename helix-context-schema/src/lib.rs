@@ -20,4 +20,10 @@ pub use types::{Active, Cursor, Instance, OpenBuffer, Position, Selection};
 
 pub const SCHEMA_VERSION: u32 = 2;
 pub const MIN_SUPPORTED_READER: u32 = 1;
+/// Helix control protocol version negotiated during the `initialize` handshake.
+///
+/// Format is `MAJOR.MINOR`. Major-version mismatches are rejected during
+/// initialize (see spec §6.1). Bumping the major version is a breaking
+/// wire-format change; minor bumps signal additive method extensions that
+/// older clients can still use safely.
 pub const PROTOCOL_VERSION: &str = "1.0";

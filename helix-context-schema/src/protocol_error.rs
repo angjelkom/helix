@@ -8,7 +8,7 @@ use serde_json::Value;
 
 /// All error codes the Helix control socket may return. Serialized as the
 /// underlying `i32` so wire format matches JSON-RPC 2.0 exactly.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(i32)]
 pub enum JsonRpcErrorCode {
     // Standard JSON-RPC 2.0 codes
