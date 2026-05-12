@@ -102,6 +102,48 @@ fn start_control_socket(
     Ok(resolved_for_cleanup)
 }
 
+/// Resolve a request's path to a `&Document`. `None` path means the active buffer.
+fn resolve_buffer<'a>(
+    editor: &'a helix_view::Editor,
+    workspace: &std::path::Path,
+    path: Option<&str>,
+) -> Result<&'a helix_view::Document, helix_context_schema::JsonRpcError> {
+    use helix_context_schema::{JsonRpcError, JsonRpcErrorCode};
+
+    match path {
+        None => {
+            let view = editor.tree.get(editor.tree.focus);
+            editor.documents.get(&view.doc).ok_or(JsonRpcError {
+                code: JsonRpcErrorCode::NoActiveDocument,
+                message: "no active document".into(),
+                data: None,
+            })
+        }
+        Some(p) => {
+            let p = std::path::Path::new(p);
+            let abs = if p.is_absolute() {
+                p.to_path_buf()
+            } else {
+                workspace.join(p)
+            };
+            // Canonicalize for comparison robustness against `..` and symlinks.
+            let abs_canon = std::fs::canonicalize(&abs).unwrap_or(abs.clone());
+            editor
+                .documents()
+                .find(|d| {
+                    d.path().map(|dp| {
+                        std::fs::canonicalize(dp).unwrap_or_else(|_| dp.to_path_buf())
+                    }) == Some(abs_canon.clone())
+                })
+                .ok_or(JsonRpcError {
+                    code: JsonRpcErrorCode::PathOutsideWorkspace,
+                    message: format!("no buffer open for path: {}", abs.display()),
+                    data: None,
+                })
+        }
+    }
+}
+
 /// Awaits a control request from the optional channel. If the channel is
 /// `None` (control socket disabled) returns a future that never resolves —
 /// so the `select!` arm is effectively disabled.
@@ -1609,12 +1651,42 @@ impl Application {
                     .collect();
                 Ok(ControlResponse::GetOpenBuffers { buffers })
             }
-            ControlRequest::GetBufferText { .. } => {
-                Err(JsonRpcError {
-                    code: JsonRpcErrorCode::MethodNotFound,
-                    message: "get-buffer-text handler not yet implemented".into(),
-                    data: None,
-                })
+            ControlRequest::GetBufferText { path, range } => {
+                let (workspace, _) = helix_loader::find_workspace();
+                let doc_result = resolve_buffer(&self.editor, &workspace, path.as_deref());
+                match doc_result {
+                    Err(e) => Err(e),
+                    Ok(doc) => {
+                        let text = doc.text();
+                        let extracted = if let Some(r) = range {
+                            // Clamp the range to [1, line_count]
+                            let start_line = r.start_line.saturating_sub(1).min(text.len_lines());
+                            let end_line = r.end_line.min(text.len_lines());
+                            if start_line >= end_line {
+                                String::new()
+                            } else {
+                                let start_char = text.line_to_char(start_line);
+                                // line_to_char returns the char index AT the start
+                                // of the line; we want chars up to (but not including)
+                                // the line after end_line. The char range is
+                                // [start_char, end_char).
+                                let end_char = if end_line >= text.len_lines() {
+                                    text.len_chars()
+                                } else {
+                                    text.line_to_char(end_line)
+                                };
+                                text.slice(start_char..end_char).to_string()
+                            }
+                        } else {
+                            text.to_string()
+                        };
+                        Ok(ControlResponse::GetBufferText {
+                            text: extracted,
+                            language: doc.language_name().map(|s| s.to_owned()),
+                            line_count: text.len_lines(),
+                        })
+                    }
+                }
             }
         };
 
