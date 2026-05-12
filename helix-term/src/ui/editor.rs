@@ -35,6 +35,7 @@ use helix_view::{
 };
 use std::{mem::take, num::NonZeroUsize, ops, path::PathBuf, rc::Rc};
 
+use helix_context_schema::UpdateSource;
 use tui::{buffer::Buffer as Surface, text::Span};
 
 use super::text_decorations::blame::InlineBlame;
@@ -1694,13 +1695,11 @@ impl Component for EditorView {
                         context.editor.set_error(format!("{}", e));
                     }
                 }
-                if context.editor.config().context_logger.enabled {
-                    if let Err(e) = crate::context_logger::write_context_file(
-                        context.editor,
-                        helix_context_schema::UpdateSource::FocusLost,
-                    ) {
-                        log::warn!("context_logger: failed to write snapshot: {}", e);
-                    }
+                if let Err(e) = crate::context_logger::write_context_file(
+                    context.editor,
+                    UpdateSource::FocusLost,
+                ) {
+                    log::warn!("context_logger: failed to write snapshot: {}", e);
                 }
                 self.terminal_focused = false;
                 EventResult::Consumed(None)
