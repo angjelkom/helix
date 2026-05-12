@@ -42,7 +42,10 @@ pub fn bind_socket(resolved: Resolved) -> io::Result<Binding> {
         std::fs::remove_file(bind_path)?;
     }
 
-    let listener = with_strict_umask(|| UnixListener::bind(bind_path))?;
+    let listener = {
+        let _guard = UmaskGuard::strict();
+        UnixListener::bind(bind_path)?
+    };
 
     #[cfg(unix)]
     {
@@ -86,22 +89,38 @@ fn is_socket_live(path: &Path) -> bool {
     }
 }
 
-fn with_strict_umask<F, T>(f: F) -> T
-where
-    F: FnOnce() -> T,
-{
-    #[cfg(unix)]
-    {
+/// RAII guard that sets umask to 0o077 on construction and restores the
+/// previous value on drop. Used to make UnixListener::bind atomic with
+/// mode 0600. Drop runs even if the protected code panics.
+#[cfg(unix)]
+struct UmaskGuard {
+    prev: libc::mode_t,
+}
+
+#[cfg(unix)]
+impl UmaskGuard {
+    fn strict() -> Self {
+        // SAFETY: umask is process-global and `libc::umask` is safe to call.
+        // The Drop impl restores it.
         let prev = unsafe { libc::umask(0o077) };
-        let out = f();
-        unsafe {
-            libc::umask(prev);
-        }
-        out
+        Self { prev }
     }
-    #[cfg(not(unix))]
-    {
-        f()
+}
+
+#[cfg(unix)]
+impl Drop for UmaskGuard {
+    fn drop(&mut self) {
+        unsafe { libc::umask(self.prev) };
+    }
+}
+
+#[cfg(not(unix))]
+struct UmaskGuard;
+
+#[cfg(not(unix))]
+impl UmaskGuard {
+    fn strict() -> Self {
+        Self
     }
 }
 
@@ -158,5 +177,27 @@ mod tests {
         unlink(&Resolved { primary: pointer.clone(), pointer_target: Some(actual.clone()) }).ok();
         assert!(!pointer.exists());
         assert!(!actual.exists());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn bound_socket_has_mode_0600() {
+        use std::os::unix::fs::MetadataExt;
+        let tmp = TempDir::new().unwrap();
+        let socket_path = tmp.path().join("perm.sock");
+        let resolved = Resolved {
+            primary: socket_path.clone(),
+            pointer_target: None,
+        };
+        let binding = bind_socket(resolved).unwrap();
+        let meta = std::fs::metadata(&socket_path).unwrap();
+        assert_eq!(
+            meta.mode() & 0o777,
+            0o600,
+            "socket should be mode 0600, got {:o}",
+            meta.mode() & 0o777,
+        );
+        drop(binding.listener);
+        unlink(&Resolved { primary: socket_path, pointer_target: None }).ok();
     }
 }
