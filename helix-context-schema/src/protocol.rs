@@ -61,6 +61,16 @@ pub enum ControlRequest {
         #[serde(skip_serializing_if = "Option::is_none", default)]
         range: Option<LineRange>,
     },
+    OpenFile {
+        path: String,
+    },
+    GotoLine {
+        line: usize,
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        column: Option<usize>,
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        path: Option<String>,
+    },
 }
 
 /// All possible successful responses. The variant name (kebab-cased) matches
@@ -88,4 +98,8 @@ pub enum ControlResponse {
         language: Option<String>,
         line_count: usize,
     },
+    /// Generic success response for state-mutating methods (open-file,
+    /// goto-line). Carries no payload — the client used the tool, the tool
+    /// worked, that's all there is to say.
+    Ok {},
 }

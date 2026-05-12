@@ -189,3 +189,55 @@ fn initialize_response_round_trips() {
     };
     assert_eq!(helix_version, "25.7.1");
 }
+
+#[test]
+fn open_file_request_serializes_with_path() {
+    let req = ControlRequest::OpenFile { path: "src/main.rs".into() };
+    let j = serde_json::to_value(&req).unwrap();
+    assert_eq!(j["method"], "open-file");
+    assert_eq!(j["params"]["path"], "src/main.rs");
+}
+
+#[test]
+fn open_file_request_round_trips() {
+    let json = serde_json::json!({
+        "method": "open-file",
+        "params": { "path": "src/lib.rs" }
+    });
+    let req: ControlRequest = serde_json::from_value(json).unwrap();
+    let ControlRequest::OpenFile { path } = req else {
+        panic!("wrong variant");
+    };
+    assert_eq!(path, "src/lib.rs");
+}
+
+#[test]
+fn goto_line_request_with_only_line() {
+    let req = ControlRequest::GotoLine { line: 42, column: None, path: None };
+    let j = serde_json::to_value(&req).unwrap();
+    assert_eq!(j["method"], "goto-line");
+    assert_eq!(j["params"]["line"], 42);
+    assert!(j["params"].get("column").is_none() || j["params"]["column"].is_null());
+    assert!(j["params"].get("path").is_none() || j["params"]["path"].is_null());
+}
+
+#[test]
+fn goto_line_request_with_all_fields() {
+    let req = ControlRequest::GotoLine {
+        line: 10,
+        column: Some(5),
+        path: Some("src/main.rs".into()),
+    };
+    let j = serde_json::to_value(&req).unwrap();
+    assert_eq!(j["params"]["line"], 10);
+    assert_eq!(j["params"]["column"], 5);
+    assert_eq!(j["params"]["path"], "src/main.rs");
+}
+
+#[test]
+fn ok_response_serializes_with_empty_result() {
+    let resp = ControlResponse::Ok {};
+    let j = serde_json::to_value(&resp).unwrap();
+    assert_eq!(j["method"], "ok");
+    assert_eq!(j["result"], serde_json::json!({}));
+}

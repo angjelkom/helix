@@ -1703,6 +1703,20 @@ impl Application {
                     }
                 }
             }
+            ControlRequest::OpenFile { .. } => {
+                Err(JsonRpcError {
+                    code: JsonRpcErrorCode::MethodNotFound,
+                    message: "open-file handler not yet implemented".into(),
+                    data: None,
+                })
+            }
+            ControlRequest::GotoLine { .. } => {
+                Err(JsonRpcError {
+                    code: JsonRpcErrorCode::MethodNotFound,
+                    message: "goto-line handler not yet implemented".into(),
+                    data: None,
+                })
+            }
         };
 
         let _ = reply.send(resp);
