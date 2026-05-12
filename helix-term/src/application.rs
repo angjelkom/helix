@@ -172,6 +172,27 @@ fn resolve_buffer<'a>(
     }
 }
 
+/// Returns Err(BufferModeUnsafe) if the editor is in Insert mode and the
+/// caller didn't pass `allow_insert_mode: true`. Used by LSP-position
+/// methods to avoid querying garbage mid-typing positions.
+#[allow(dead_code)]
+fn ensure_buffer_mode_safe(
+    editor: &helix_view::Editor,
+    allow_insert_mode: Option<bool>,
+) -> Result<(), helix_context_schema::JsonRpcError> {
+    use helix_context_schema::{JsonRpcError, JsonRpcErrorCode};
+    if editor.mode == helix_view::document::Mode::Insert
+        && !allow_insert_mode.unwrap_or(false)
+    {
+        return Err(JsonRpcError {
+            code: JsonRpcErrorCode::BufferModeUnsafe,
+            message: "editor is in insert mode; pass allow_insert_mode: true to override".into(),
+            data: None,
+        });
+    }
+    Ok(())
+}
+
 /// Awaits a control request from the optional channel. If the channel is
 /// `None` (control socket disabled) returns a future that never resolves —
 /// so the `select!` arm is effectively disabled.
