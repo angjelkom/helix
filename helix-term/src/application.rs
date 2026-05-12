@@ -258,6 +258,58 @@ fn lsp_hover_contents_to_string(c: &lsp::HoverContents) -> String {
     }
 }
 
+/// Converts a slice of LSP `Location` values into the schema's `LspLocation`
+/// type, computing both a workspace-relative path and an absolute path.
+fn lsp_locations_to_schema(
+    locations: Vec<lsp::Location>,
+    workspace: &std::path::Path,
+) -> Vec<helix_context_schema::LspLocation> {
+    locations
+        .into_iter()
+        .filter_map(|loc| {
+            let path_abs = loc.uri.to_file_path().ok()?;
+            let path_rel = path_abs
+                .strip_prefix(workspace)
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_else(|_| path_abs.to_string_lossy().into_owned());
+            Some(helix_context_schema::LspLocation {
+                path: path_rel,
+                path_abs: path_abs.to_string_lossy().into_owned(),
+                range: helix_context_schema::LspRange {
+                    start: helix_context_schema::LspPosition {
+                        line: loc.range.start.line,
+                        character: loc.range.start.character,
+                    },
+                    end: helix_context_schema::LspPosition {
+                        line: loc.range.end.line,
+                        character: loc.range.end.character,
+                    },
+                },
+            })
+        })
+        .collect()
+}
+
+/// Flattens LSP's `GotoDefinitionResponse` union (Scalar / Array / Link)
+/// into a uniform `Vec<Location>`.
+fn flatten_definition_response(
+    resp: Option<lsp::GotoDefinitionResponse>,
+) -> Vec<lsp::Location> {
+    use lsp::GotoDefinitionResponse;
+    match resp {
+        None => Vec::new(),
+        Some(GotoDefinitionResponse::Scalar(loc)) => vec![loc],
+        Some(GotoDefinitionResponse::Array(locs)) => locs,
+        Some(GotoDefinitionResponse::Link(links)) => links
+            .into_iter()
+            .map(|l| lsp::Location {
+                uri: l.target_uri,
+                range: l.target_range,
+            })
+            .collect(),
+    }
+}
+
 /// Awaits a control request from the optional channel. If the channel is
 /// `None` (control socket disabled) returns a future that never resolves —
 /// so the `select!` arm is effectively disabled.
@@ -2033,12 +2085,69 @@ impl Application {
                 });
                 return;
             }
-            ControlRequest::GetDefinitionAt { .. } => {
-                Err(JsonRpcError {
-                    code: JsonRpcErrorCode::MethodNotFound,
-                    message: "get-definition-at handler not yet implemented".into(),
-                    data: None,
-                })
+            ControlRequest::GetDefinitionAt { line, column, path, allow_insert_mode } => {
+                if let Err(e) = ensure_buffer_mode_safe(&self.editor, allow_insert_mode) {
+                    let _ = reply.send(Err(e));
+                    return;
+                }
+                let (workspace, _) = helix_loader::find_workspace();
+                let doc = match resolve_buffer(&self.editor, &workspace, path.as_deref()) {
+                    Ok(d) => d,
+                    Err(e) => {
+                        let _ = reply.send(Err(e));
+                        return;
+                    }
+                };
+
+                // Pick an LSP client supporting goto-definition.
+                let lsp_client = doc
+                    .language_servers_with_feature(
+                        helix_core::syntax::config::LanguageServerFeature::GotoDefinition,
+                    )
+                    .next();
+                let Some(lsp_client) = lsp_client else {
+                    let _ = reply.send(Err(JsonRpcError {
+                        code: JsonRpcErrorCode::NoLspForLanguage,
+                        message: "no LSP supporting goto-definition for this document".into(),
+                        data: None,
+                    }));
+                    return;
+                };
+
+                // Convert 1-indexed (line, column) to a char index, then to LSP Position.
+                let text = doc.text();
+                let target_line = line.saturating_sub(1).min(text.len_lines().saturating_sub(1));
+                let target_col = column.saturating_sub(1);
+                let line_start = text.line_to_char(target_line);
+                let pos_char = (line_start + target_col).min(text.len_chars());
+                let lsp_pos = helix_lsp::util::pos_to_lsp_pos(
+                    text,
+                    pos_char,
+                    lsp_client.offset_encoding(),
+                );
+
+                let doc_id = doc.identifier();
+                let future = match lsp_client.goto_definition(doc_id, lsp_pos, None) {
+                    Some(f) => f,
+                    None => {
+                        let _ = reply.send(Err(JsonRpcError {
+                            code: JsonRpcErrorCode::NoLspForLanguage,
+                            message: "LSP server does not support goto-definition".into(),
+                            data: None,
+                        }));
+                        return;
+                    }
+                };
+
+                let workspace_clone = workspace.clone();
+                spawn_lsp_request(reply, future, move |resp| {
+                    let locations = flatten_definition_response(resp);
+                    let schema_locs = lsp_locations_to_schema(locations, &workspace_clone);
+                    helix_context_schema::ControlResponse::GetDefinitionAt {
+                        locations: schema_locs,
+                    }
+                });
+                return;
             }
             ControlRequest::GetReferencesAt { .. } => {
                 Err(JsonRpcError {
