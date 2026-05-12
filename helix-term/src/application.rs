@@ -76,6 +76,7 @@ const LSP_SHOW_MESSAGE_REQUEST_ID: &str = "lsp-show-message-request";
 /// so the caller can unlink it on shutdown.
 fn start_control_socket(
     editor: &helix_view::Editor,
+    control_tx: tokio::sync::mpsc::UnboundedSender<helix_view::editor::EditorEvent>,
 ) -> std::io::Result<crate::control_socket::path::Resolved> {
     use crate::control_socket::{lifecycle, path, server};
 
@@ -98,7 +99,7 @@ fn start_control_socket(
     let binding = lifecycle::bind_socket(resolved)?;
     let (listener, resolved_for_cleanup) = binding.split();
 
-    tokio::spawn(server::run_accept_loop(listener));
+    tokio::spawn(server::run_accept_loop(listener, control_tx));
 
     Ok(resolved_for_cleanup)
 }
@@ -120,6 +121,13 @@ pub struct Application {
     /// runs as a tokio task; this stores the resolved path so we can
     /// unlink the socket files on shutdown.
     control_socket_binding: Option<crate::control_socket::path::Resolved>,
+
+    /// Receiver paired with the sender given to the control-socket accept
+    /// loop. Receives `EditorEvent::ControlRequest` events from per-connection
+    /// tasks; processed by `handle_control_request` in the main event loop.
+    /// `None` when the control socket isn't enabled.
+    control_request_rx:
+        Option<tokio::sync::mpsc::UnboundedReceiver<helix_view::editor::EditorEvent>>,
 }
 
 #[cfg(feature = "integration")]
@@ -305,16 +313,17 @@ impl Application {
         ])
         .context("build signal handler")?;
 
-        let control_socket_binding = if editor.config().control_socket.enabled {
-            match start_control_socket(&editor) {
-                Ok(resolved) => Some(resolved),
+        let (control_socket_binding, control_request_rx) = if editor.config().control_socket.enabled {
+            let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<helix_view::editor::EditorEvent>();
+            match start_control_socket(&editor, tx) {
+                Ok(resolved) => (Some(resolved), Some(rx)),
                 Err(e) => {
                     log::warn!("control-socket: failed to start: {}", e);
-                    None
+                    (None, None)
                 }
             }
         } else {
-            None
+            (None, None)
         };
 
         let app = Self {
@@ -327,6 +336,7 @@ impl Application {
             lsp_progress: LspProgressMap::new(),
             theme_mode,
             control_socket_binding,
+            control_request_rx,
         };
 
         Ok(app)
