@@ -377,6 +377,9 @@ pub struct Config {
     /// running in another pane) can pick up where you are.
     #[serde(default)]
     pub context_logger: ContextLoggerConfig,
+    /// Control-socket configuration. Disabled by default. See spec §5.
+    #[serde(default)]
+    pub control_socket: ControlSocketConfig,
     /// Set a global text_width
     pub text_width: usize,
     /// Time in milliseconds since last keypress before idle timers trigger.
@@ -1101,6 +1104,34 @@ impl Default for ContextLoggerConfig {
     }
 }
 
+/// Configuration for the control socket (Phase 2+).
+///
+/// When enabled, Helix binds a Unix-domain socket at `<workspace>/.helix/control-<pid>.sock`
+/// and accepts JSON-RPC requests from external tools. Disabled by default —
+/// the feature is opt-in.
+///
+/// See `docs/specs/2026-05-12-helix-claude-mcp-bridge-design.md` (§5) for the
+/// full design.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case", default)]
+pub struct ControlSocketConfig {
+    /// Whether the control socket is enabled. Defaults to false.
+    pub enabled: bool,
+    /// Override the socket path. Empty string = auto-resolve via
+    /// `<workspace>/.helix/control-<pid>.sock` (with macOS pointer-file fallback
+    /// for paths that exceed `sun_path` length). See spec §5.2.
+    pub path: PathBuf,
+}
+
+impl Default for ControlSocketConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            path: PathBuf::new(),
+        }
+    }
+}
+
 fn deserialize_auto_save<'de, D>(deserializer: D) -> Result<AutoSave, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -1253,6 +1284,7 @@ impl Default for Config {
             default_yank_register: '"',
             auto_save: AutoSave::default(),
             context_logger: ContextLoggerConfig::default(),
+            control_socket: ControlSocketConfig::default(),
             idle_timeout: Duration::from_millis(250),
             completion_timeout: Duration::from_millis(250),
             inline_completion_timeout: Duration::from_millis(150),
