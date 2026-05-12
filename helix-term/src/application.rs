@@ -1613,11 +1613,16 @@ impl Application {
                 }
             }
             ControlRequest::GetOpenBuffers {} => {
-                Err(JsonRpcError {
-                    code: JsonRpcErrorCode::MethodNotFound,
-                    message: "get-open-buffers handler not yet implemented".into(),
-                    data: None,
-                })
+                let buffers: Vec<helix_context_schema::OpenBuffer> = self
+                    .editor
+                    .documents()
+                    .map(|d| helix_context_schema::OpenBuffer {
+                        path: d.path().map(|p| p.to_string_lossy().into_owned()),
+                        language: d.language_name().map(|s| s.to_owned()),
+                        modified: d.is_modified(),
+                    })
+                    .collect();
+                Ok(ControlResponse::GetOpenBuffers { buffers })
             }
             ControlRequest::GetBufferText { .. } => {
                 Err(JsonRpcError {
