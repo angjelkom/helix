@@ -1,4 +1,11 @@
-//! JSON-RPC 2.0 protocol types for the Helix control socket dialect.
+//! Protocol types for the Helix control socket. JSON-RPC-inspired
+//! request/response wire format, but **not** strictly JSON-RPC 2.0:
+//!
+//! - One request per newline-delimited line, one response per line.
+//! - One request at a time per connection — no pipelining.
+//! - No `jsonrpc: "2.0"` envelope field on the wire.
+//! - No `id` field — request-response order is preserved by the connection's
+//!   sequential read/write loop, so correlation is unnecessary.
 //!
 //! The wire format is *not* MCP — it's a small custom dialect specific to
 //! Helix. An external bridge translates between this and MCP. See spec §6.
