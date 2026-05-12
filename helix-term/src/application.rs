@@ -234,6 +234,30 @@ fn spawn_lsp_request<F, T, C>(
     });
 }
 
+/// Flatten LSP `HoverContents` (MarkedString and MarkupContent variants) into
+/// a single plain-text string for `LspHover.contents`.
+#[allow(dead_code)]
+fn lsp_hover_contents_to_string(c: &lsp::HoverContents) -> String {
+    use lsp::{HoverContents, MarkedString};
+    match c {
+        HoverContents::Scalar(MarkedString::String(s)) => s.clone(),
+        HoverContents::Scalar(MarkedString::LanguageString(ls)) => {
+            format!("```{}\n{}\n```", ls.language, ls.value)
+        }
+        HoverContents::Array(items) => items
+            .iter()
+            .map(|m| match m {
+                MarkedString::String(s) => s.clone(),
+                MarkedString::LanguageString(ls) => {
+                    format!("```{}\n{}\n```", ls.language, ls.value)
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n"),
+        HoverContents::Markup(mc) => mc.value.clone(),
+    }
+}
+
 /// Awaits a control request from the optional channel. If the channel is
 /// `None` (control socket disabled) returns a future that never resolves —
 /// so the `select!` arm is effectively disabled.
@@ -1937,12 +1961,77 @@ impl Application {
                 }));
                 return;
             }
-            ControlRequest::GetHoverAt { .. } => {
-                Err(JsonRpcError {
-                    code: JsonRpcErrorCode::MethodNotFound,
-                    message: "get-hover-at handler not yet implemented".into(),
-                    data: None,
-                })
+            ControlRequest::GetHoverAt { line, column, path, allow_insert_mode } => {
+                if let Err(e) = ensure_buffer_mode_safe(&self.editor, allow_insert_mode) {
+                    let _ = reply.send(Err(e));
+                    return;
+                }
+                let (workspace, _) = helix_loader::find_workspace();
+                let doc = match resolve_buffer(&self.editor, &workspace, path.as_deref()) {
+                    Ok(d) => d,
+                    Err(e) => {
+                        let _ = reply.send(Err(e));
+                        return;
+                    }
+                };
+
+                // Pick an LSP client supporting hover.
+                let lsp_client = doc
+                    .language_servers_with_feature(
+                        helix_core::syntax::config::LanguageServerFeature::Hover,
+                    )
+                    .next();
+                let Some(lsp_client) = lsp_client else {
+                    let _ = reply.send(Err(JsonRpcError {
+                        code: JsonRpcErrorCode::NoLspForLanguage,
+                        message: "no LSP supporting hover for this document".into(),
+                        data: None,
+                    }));
+                    return;
+                };
+
+                // Convert 1-indexed (line, column) to a char index, then to LSP Position.
+                let text = doc.text();
+                let target_line = line.saturating_sub(1).min(text.len_lines().saturating_sub(1));
+                let target_col = column.saturating_sub(1);
+                let line_start = text.line_to_char(target_line);
+                let pos_char = (line_start + target_col).min(text.len_chars());
+                let lsp_pos = helix_lsp::util::pos_to_lsp_pos(
+                    text,
+                    pos_char,
+                    lsp_client.offset_encoding(),
+                );
+
+                let doc_id = doc.identifier();
+                let future = match lsp_client.text_document_hover(doc_id, lsp_pos, None) {
+                    Some(f) => f,
+                    None => {
+                        let _ = reply.send(Err(JsonRpcError {
+                            code: JsonRpcErrorCode::NoLspForLanguage,
+                            message: "LSP server does not support hover".into(),
+                            data: None,
+                        }));
+                        return;
+                    }
+                };
+
+                spawn_lsp_request(reply, future, |hover_opt: Option<lsp::Hover>| {
+                    let hover = hover_opt.map(|h| helix_context_schema::LspHover {
+                        contents: lsp_hover_contents_to_string(&h.contents),
+                        range: h.range.map(|r| helix_context_schema::LspRange {
+                            start: helix_context_schema::LspPosition {
+                                line: r.start.line,
+                                character: r.start.character,
+                            },
+                            end: helix_context_schema::LspPosition {
+                                line: r.end.line,
+                                character: r.end.character,
+                            },
+                        }),
+                    });
+                    helix_context_schema::ControlResponse::GetHoverAt { hover }
+                });
+                return;
             }
             ControlRequest::GetDefinitionAt { .. } => {
                 Err(JsonRpcError {
