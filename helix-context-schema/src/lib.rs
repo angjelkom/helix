@@ -4,9 +4,11 @@
 //! consume the file (e.g. the planned `helix-claude-mcp` bridge). Schema changes
 //! happen here once and surface as compile errors on both producers and consumers.
 
+mod snapshot;
 mod source;
 mod types;
 
+pub use snapshot::ContextSnapshot;
 pub use source::UpdateSource;
 pub use types::{Active, Cursor, Instance, OpenBuffer, Position, Selection};
 

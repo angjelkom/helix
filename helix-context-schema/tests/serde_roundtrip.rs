@@ -93,3 +93,69 @@ fn instance_round_trips() {
     assert_eq!(i.pid, back.pid);
     assert_eq!(i.socket_path, back.socket_path);
 }
+
+use helix_context_schema::{ContextSnapshot, SCHEMA_VERSION};
+
+#[test]
+fn snapshot_schema_version_is_2() {
+    assert_eq!(SCHEMA_VERSION, 2);
+}
+
+#[test]
+fn snapshot_full_round_trip() {
+    let snap = ContextSnapshot {
+        schema_version: SCHEMA_VERSION,
+        min_supported_reader: 1,
+        timestamp: "2026-05-12T14:32:01Z".into(),
+        last_update_source: UpdateSource::FocusLost,
+        instance: None,
+        project_root: "/repo".into(),
+        mode: "normal".into(),
+        active: Active {
+            path: Some("src/main.rs".into()),
+            path_abs: Some("/repo/src/main.rs".into()),
+            language: Some("rust".into()),
+            modified: false,
+            line_count: 200,
+            cursors: vec![Cursor { primary: true, line: 17, column: 5 }],
+            selections: vec![],
+            text: None,
+        },
+        open_buffers: vec![],
+    };
+    let j = serde_json::to_value(&snap).unwrap();
+
+    assert_eq!(j["schema_version"], 2);
+    assert_eq!(j["last_update_source"], "focus_lost");
+    assert!(j.get("instance").is_none() || j["instance"].is_null());
+
+    let back: ContextSnapshot = serde_json::from_value(j).unwrap();
+    assert_eq!(back.schema_version, 2);
+    assert_eq!(back.project_root, "/repo");
+}
+
+#[test]
+fn snapshot_with_instance_round_trips() {
+    let snap = ContextSnapshot {
+        schema_version: SCHEMA_VERSION,
+        min_supported_reader: 1,
+        timestamp: "2026-05-12T14:32:01Z".into(),
+        last_update_source: UpdateSource::McpCommand,
+        instance: Some(Instance {
+            pid: 12345,
+            socket_path: "/repo/.helix/control-12345.sock".into(),
+            started_at: "2026-05-12T10:00:00Z".into(),
+        }),
+        project_root: "/repo".into(),
+        mode: "normal".into(),
+        active: Active {
+            path: None, path_abs: None, language: None, modified: false,
+            line_count: 0, cursors: vec![], selections: vec![], text: None,
+        },
+        open_buffers: vec![],
+    };
+    let j = serde_json::to_value(&snap).unwrap();
+    assert_eq!(j["instance"]["pid"], 12345);
+    let back: ContextSnapshot = serde_json::from_value(j).unwrap();
+    assert!(back.instance.is_some());
+}
