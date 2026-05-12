@@ -2052,7 +2052,7 @@ impl Application {
                 let Some(doc_uri) = doc.uri() else {
                     let _ = reply.send(Err(JsonRpcError {
                         code: JsonRpcErrorCode::NoActiveDocument,
-                        message: "document has no URI (scratch buffer?)".into(),
+                        message: "document has no URL".into(),
                         data: None,
                     }));
                     return;
@@ -2107,6 +2107,14 @@ impl Application {
                         return;
                     }
                 };
+                let Some(_doc_url) = doc.url() else {
+                    let _ = reply.send(Err(JsonRpcError {
+                        code: JsonRpcErrorCode::NoActiveDocument,
+                        message: "document has no URL".into(),
+                        data: None,
+                    }));
+                    return;
+                };
 
                 // Pick an LSP client supporting hover.
                 let lsp_client = doc
@@ -2128,7 +2136,12 @@ impl Application {
                 let target_line = line.saturating_sub(1).min(text.len_lines().saturating_sub(1));
                 let target_col = column.saturating_sub(1);
                 let line_start = text.line_to_char(target_line);
-                let pos_char = (line_start + target_col).min(text.len_chars());
+                let line_end_char = if target_line + 1 < text.len_lines() {
+                    text.line_to_char(target_line + 1).saturating_sub(1)
+                } else {
+                    text.len_chars()
+                };
+                let pos_char = (line_start + target_col).min(line_end_char);
                 let lsp_pos = helix_lsp::util::pos_to_lsp_pos(
                     text,
                     pos_char,
@@ -2179,6 +2192,14 @@ impl Application {
                         return;
                     }
                 };
+                let Some(_doc_url) = doc.url() else {
+                    let _ = reply.send(Err(JsonRpcError {
+                        code: JsonRpcErrorCode::NoActiveDocument,
+                        message: "document has no URL".into(),
+                        data: None,
+                    }));
+                    return;
+                };
 
                 // Pick an LSP client supporting goto-definition.
                 let lsp_client = doc
@@ -2200,7 +2221,12 @@ impl Application {
                 let target_line = line.saturating_sub(1).min(text.len_lines().saturating_sub(1));
                 let target_col = column.saturating_sub(1);
                 let line_start = text.line_to_char(target_line);
-                let pos_char = (line_start + target_col).min(text.len_chars());
+                let line_end_char = if target_line + 1 < text.len_lines() {
+                    text.line_to_char(target_line + 1).saturating_sub(1)
+                } else {
+                    text.len_chars()
+                };
+                let pos_char = (line_start + target_col).min(line_end_char);
                 let lsp_pos = helix_lsp::util::pos_to_lsp_pos(
                     text,
                     pos_char,
@@ -2271,7 +2297,12 @@ impl Application {
                 let target_line = line.saturating_sub(1).min(text.len_lines().saturating_sub(1));
                 let target_col = column.saturating_sub(1);
                 let line_start = text.line_to_char(target_line);
-                let pos_char = (line_start + target_col).min(text.len_chars());
+                let line_end_char = if target_line + 1 < text.len_lines() {
+                    text.line_to_char(target_line + 1).saturating_sub(1)
+                } else {
+                    text.len_chars()
+                };
+                let pos_char = (line_start + target_col).min(line_end_char);
                 let lsp_pos = helix_lsp::util::pos_to_lsp_pos(
                     text,
                     pos_char,
