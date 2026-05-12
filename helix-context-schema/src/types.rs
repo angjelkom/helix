@@ -56,3 +56,16 @@ pub struct Active {
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub text: Option<String>,
 }
+
+/// Optional metadata about the running Helix instance that wrote this snapshot.
+/// Included by Phase 2 once the control socket is implemented; omitted entirely
+/// during Phase 1.
+///
+/// The socket_path is a *hint* for clients — discovery does not depend on it
+/// (clients glob `<workspace>/.helix/control-*.sock` directly).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Instance {
+    pub pid: u32,
+    pub socket_path: String,
+    pub started_at: String,
+}
