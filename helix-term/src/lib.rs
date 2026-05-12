@@ -7,6 +7,7 @@ pub mod commands;
 pub mod compositor;
 pub mod config;
 pub mod context_logger;
+pub mod control_socket;
 pub mod events;
 pub mod health;
 pub mod job;

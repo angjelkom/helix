@@ -96,6 +96,7 @@ serde = { version = "1.0", features = ["derive"] }
 steel-core = { workspace = true, optional = true }
 steel-doc = { git = "https://github.com/mattwparas/steel.git", optional = true }
 
+dirs = "5.0"
 globset = "0.4.16"
 dashmap = "6.0"
 
