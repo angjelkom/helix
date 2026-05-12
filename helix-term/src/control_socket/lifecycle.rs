@@ -65,6 +65,15 @@ pub fn bind_socket(resolved: Resolved) -> io::Result<Binding> {
     Ok(Binding { listener, resolved })
 }
 
+impl Binding {
+    /// Move the listener out, leaving the resolved path behind. Used by
+    /// Application::new to spawn the accept loop while keeping the path
+    /// for unlink-on-shutdown.
+    pub fn split(self) -> (UnixListener, Resolved) {
+        (self.listener, self.resolved)
+    }
+}
+
 /// Unlink everything bind_socket created (socket file + optional pointer
 /// file). Called from Application::close.
 pub fn unlink(resolved: &Resolved) -> io::Result<()> {
