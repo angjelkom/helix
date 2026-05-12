@@ -78,3 +78,18 @@ fn open_buffer_round_trips() {
     let back: OpenBuffer = serde_json::from_value(j).unwrap();
     assert_eq!(b.modified, back.modified);
 }
+
+use helix_context_schema::Instance;
+
+#[test]
+fn instance_round_trips() {
+    let i = Instance {
+        pid: 12345,
+        socket_path: "/repo/.helix/control-12345.sock".into(),
+        started_at: "2026-05-12T10:00:00Z".into(),
+    };
+    let j = serde_json::to_value(&i).unwrap();
+    let back: Instance = serde_json::from_value(j).unwrap();
+    assert_eq!(i.pid, back.pid);
+    assert_eq!(i.socket_path, back.socket_path);
+}

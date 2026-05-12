@@ -8,7 +8,7 @@ mod source;
 mod types;
 
 pub use source::UpdateSource;
-pub use types::{Active, Cursor, OpenBuffer, Position, Selection};
+pub use types::{Active, Cursor, Instance, OpenBuffer, Position, Selection};
 
 pub const SCHEMA_VERSION: u32 = 2;
 pub const MIN_SUPPORTED_READER: u32 = 1;
