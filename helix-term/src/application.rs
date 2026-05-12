@@ -70,12 +70,36 @@ type TerminalEvent = crossterm::event::Event;
 
 type Terminal = tui::terminal::Terminal<TerminalBackend>;
 
+/// Captures what the live control-socket session needs to advertise itself
+/// in snapshot.instance. Built once at Application::new when the socket is
+/// enabled, then cloned/borrowed into snapshot writes via the
+/// MCP-command path.
+#[derive(Debug)]
+struct ControlSocketSession {
+    resolved: crate::control_socket::path::Resolved,
+    pid: u32,
+    started_at: String,
+}
+
+impl ControlSocketSession {
+    fn to_instance(&self) -> helix_context_schema::Instance {
+        helix_context_schema::Instance {
+            pid: self.pid,
+            socket_path: match self.resolved.pointer_target.as_deref() {
+                Some(real) => real.to_string_lossy().into_owned(),
+                None => self.resolved.primary.to_string_lossy().into_owned(),
+            },
+            started_at: self.started_at.clone(),
+        }
+    }
+}
+
 /// Start the control socket if config enables it. Returns the resolved path
 /// so the caller can unlink it on shutdown.
 fn start_control_socket(
     editor: &helix_view::Editor,
     control_tx: tokio::sync::mpsc::Sender<helix_view::editor::EditorEvent>,
-) -> std::io::Result<crate::control_socket::path::Resolved> {
+) -> std::io::Result<ControlSocketSession> {
     use crate::control_socket::{lifecycle, path, server};
 
     let (workspace, is_cwd_fallback) = helix_loader::find_workspace();
@@ -99,7 +123,11 @@ fn start_control_socket(
 
     tokio::spawn(server::run_accept_loop(listener, control_tx));
 
-    Ok(resolved_for_cleanup)
+    Ok(ControlSocketSession {
+        resolved: resolved_for_cleanup,
+        pid: std::process::id(),
+        started_at: chrono::Utc::now().to_rfc3339(),
+    })
 }
 
 /// Resolve a request's path to a `&Document`. `None` path means the active buffer.
@@ -172,7 +200,7 @@ pub struct Application {
     /// Set when [editor.control-socket] enabled = true. The accept loop
     /// runs as a tokio task; this stores the resolved path so we can
     /// unlink the socket files on shutdown.
-    control_socket_binding: Option<crate::control_socket::path::Resolved>,
+    control_socket_binding: Option<ControlSocketSession>,
 
     /// Receiver paired with the sender given to the control-socket accept
     /// loop. Receives `EditorEvent::ControlRequest` events from per-connection
@@ -1589,8 +1617,8 @@ impl Application {
             ));
         }
 
-        if let Some(resolved) = self.control_socket_binding.take() {
-            if let Err(e) = crate::control_socket::lifecycle::unlink(&resolved) {
+        if let Some(session) = self.control_socket_binding.take() {
+            if let Err(e) = crate::control_socket::lifecycle::unlink(&session.resolved) {
                 log::warn!("control-socket: failed to unlink at shutdown: {}", e);
             }
         }
@@ -1627,12 +1655,13 @@ impl Application {
                     })
                 } else {
                     let cfg = self.editor.config().context_logger.clone();
+                    let instance = self.control_socket_binding.as_ref().map(|s| s.to_instance());
                     let snap = crate::context_logger::build_snapshot(
                         &self.editor,
                         &workspace,
                         &cfg,
                         helix_context_schema::UpdateSource::Manual,
-                        None,  // Phase 2c Task 6 will plumb the real Instance here
+                        instance,
                     );
                     Ok(ControlResponse::CurrentState {
                         active: snap.active,
@@ -1708,10 +1737,11 @@ impl Application {
                     Ok(_) => {
                         // Snapshot rewrite per spec §5.5 — direct call, not via
                         // helix_event::dispatch, to avoid firing Steel hooks.
+                        let instance = self.control_socket_binding.as_ref().map(|s| s.to_instance());
                         if let Err(e) = crate::context_logger::write_context_file(
                             &self.editor,
                             helix_context_schema::UpdateSource::McpCommand,
-                            None, // Task 6 fills in Some(Instance)
+                            instance,
                         ) {
                             log::warn!("control-socket: snapshot rewrite failed after open-file: {}", e);
                         }
@@ -1778,10 +1808,11 @@ impl Application {
                 let selection = helix_core::Selection::point(char_idx);
                 doc.set_selection(view_id, selection);
 
+                let instance = self.control_socket_binding.as_ref().map(|s| s.to_instance());
                 if let Err(e) = crate::context_logger::write_context_file(
                     &self.editor,
                     helix_context_schema::UpdateSource::McpCommand,
-                    None, // Task 6
+                    instance,
                 ) {
                     log::warn!("control-socket: snapshot rewrite failed after goto-line: {}", e);
                 }
