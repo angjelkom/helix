@@ -18,6 +18,11 @@ pub fn try_dispatch_inline(
             protocol_version,
             client_info,
         } => Some(handle_initialize(protocol_version, client_info)),
+        // CurrentState, GetOpenBuffers, GetBufferText all need &mut Editor.
+        // Returning None routes them through the event-loop dispatch.
+        ControlRequest::CurrentState {}
+        | ControlRequest::GetOpenBuffers {}
+        | ControlRequest::GetBufferText { .. } => None,
     }
 }
 
@@ -69,7 +74,9 @@ mod tests {
             client_info: ClientInfo { name: "t".into(), version: "0.1".into() },
         };
         let resp = try_dispatch_inline(&req).unwrap().unwrap();
-        let ControlResponse::Initialize { capabilities, .. } = resp;
+        let ControlResponse::Initialize { capabilities, .. } = resp else {
+            panic!("expected Initialize response");
+        };
         assert!(capabilities.read_methods.contains(&"initialize".to_string()));
     }
 
