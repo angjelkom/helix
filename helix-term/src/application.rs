@@ -310,6 +310,72 @@ fn flatten_definition_response(
     }
 }
 
+/// Flattens `WorkspaceSymbolResponse` (Flat or Nested variant) into a uniform
+/// list of `(name, kind, Location, container_name)` tuples. The `Nested`
+/// variant's `WorkspaceSymbol.location` is an `OneOf<Location, WorkspaceLocation>`;
+/// entries with only a `WorkspaceLocation` (no range) are skipped because we
+/// require a range for the schema's `LspRange`.
+fn flatten_workspace_symbol_response(
+    resp: Option<lsp::WorkspaceSymbolResponse>,
+) -> Vec<(String, lsp::SymbolKind, lsp::Location, Option<String>)> {
+    use lsp::{OneOf, WorkspaceSymbolResponse};
+    match resp {
+        None => Vec::new(),
+        Some(WorkspaceSymbolResponse::Flat(items)) => items
+            .into_iter()
+            .map(|si| (si.name, si.kind, si.location, si.container_name))
+            .collect(),
+        Some(WorkspaceSymbolResponse::Nested(items)) => items
+            .into_iter()
+            .filter_map(|ws| {
+                let location = match ws.location {
+                    OneOf::Left(loc) => loc,
+                    OneOf::Right(wl) => lsp::Location {
+                        uri: wl.uri,
+                        range: lsp::Range::default(),
+                    },
+                };
+                Some((ws.name, ws.kind, location, ws.container_name))
+            })
+            .collect(),
+    }
+}
+
+/// Maps an LSP `SymbolKind` constant to a lowercase string for the schema.
+fn lsp_symbol_kind_to_string(kind: lsp::SymbolKind) -> String {
+    use lsp::SymbolKind;
+    match kind {
+        SymbolKind::FILE => "file",
+        SymbolKind::MODULE => "module",
+        SymbolKind::NAMESPACE => "namespace",
+        SymbolKind::PACKAGE => "package",
+        SymbolKind::CLASS => "class",
+        SymbolKind::METHOD => "method",
+        SymbolKind::PROPERTY => "property",
+        SymbolKind::FIELD => "field",
+        SymbolKind::CONSTRUCTOR => "constructor",
+        SymbolKind::ENUM => "enum",
+        SymbolKind::INTERFACE => "interface",
+        SymbolKind::FUNCTION => "function",
+        SymbolKind::VARIABLE => "variable",
+        SymbolKind::CONSTANT => "constant",
+        SymbolKind::STRING => "string",
+        SymbolKind::NUMBER => "number",
+        SymbolKind::BOOLEAN => "boolean",
+        SymbolKind::ARRAY => "array",
+        SymbolKind::OBJECT => "object",
+        SymbolKind::KEY => "key",
+        SymbolKind::NULL => "null",
+        SymbolKind::ENUM_MEMBER => "enum_member",
+        SymbolKind::STRUCT => "struct",
+        SymbolKind::EVENT => "event",
+        SymbolKind::OPERATOR => "operator",
+        SymbolKind::TYPE_PARAMETER => "type_parameter",
+        _ => "unknown",
+    }
+    .into()
+}
+
 /// Awaits a control request from the optional channel. If the channel is
 /// `None` (control socket disabled) returns a future that never resolves —
 /// so the `select!` arm is effectively disabled.
@@ -2164,19 +2230,156 @@ impl Application {
                 });
                 return;
             }
-            ControlRequest::GetReferencesAt { .. } => {
-                Err(JsonRpcError {
-                    code: JsonRpcErrorCode::MethodNotFound,
-                    message: "get-references-at handler not yet implemented".into(),
-                    data: None,
-                })
+            ControlRequest::GetReferencesAt {
+                line, column, path, allow_insert_mode, include_declaration,
+            } => {
+                if let Err(e) = ensure_buffer_mode_safe(&self.editor, allow_insert_mode) {
+                    let _ = reply.send(Err(e));
+                    return;
+                }
+                let (workspace, _) = helix_loader::find_workspace();
+                let doc = match resolve_buffer(&self.editor, &workspace, path.as_deref()) {
+                    Ok(d) => d,
+                    Err(e) => {
+                        let _ = reply.send(Err(e));
+                        return;
+                    }
+                };
+                let Some(_doc_url) = doc.url() else {
+                    let _ = reply.send(Err(JsonRpcError {
+                        code: JsonRpcErrorCode::NoActiveDocument,
+                        message: "document has no URL".into(),
+                        data: None,
+                    }));
+                    return;
+                };
+                let lsp_client = doc
+                    .language_servers_with_feature(
+                        helix_core::syntax::config::LanguageServerFeature::GotoReference,
+                    )
+                    .next();
+                let Some(lsp_client) = lsp_client else {
+                    let _ = reply.send(Err(JsonRpcError {
+                        code: JsonRpcErrorCode::NoLspForLanguage,
+                        message: "no LSP supporting find-references for this document".into(),
+                        data: None,
+                    }));
+                    return;
+                };
+
+                let text = doc.text();
+                let target_line = line.saturating_sub(1).min(text.len_lines().saturating_sub(1));
+                let target_col = column.saturating_sub(1);
+                let line_start = text.line_to_char(target_line);
+                let pos_char = (line_start + target_col).min(text.len_chars());
+                let lsp_pos = helix_lsp::util::pos_to_lsp_pos(
+                    text,
+                    pos_char,
+                    lsp_client.offset_encoding(),
+                );
+
+                let include = include_declaration.unwrap_or(true);
+                let doc_id = doc.identifier();
+                let future = match lsp_client.goto_reference(doc_id, lsp_pos, include, None) {
+                    Some(f) => f,
+                    None => {
+                        let _ = reply.send(Err(JsonRpcError {
+                            code: JsonRpcErrorCode::NoLspForLanguage,
+                            message: "LSP server does not support find-references".into(),
+                            data: None,
+                        }));
+                        return;
+                    }
+                };
+
+                let workspace_clone = workspace.clone();
+                spawn_lsp_request(
+                    reply,
+                    future,
+                    move |resp: Option<Vec<lsp::Location>>| {
+                        let schema_locs = lsp_locations_to_schema(
+                            resp.unwrap_or_default(),
+                            &workspace_clone,
+                        );
+                        helix_context_schema::ControlResponse::GetReferencesAt {
+                            locations: schema_locs,
+                        }
+                    },
+                );
+                return;
             }
-            ControlRequest::GetWorkspaceSymbols { .. } => {
-                Err(JsonRpcError {
-                    code: JsonRpcErrorCode::MethodNotFound,
-                    message: "get-workspace-symbols handler not yet implemented".into(),
-                    data: None,
-                })
+            ControlRequest::GetWorkspaceSymbols { query } => {
+                // Pick the first LSP server with WorkspaceSymbols support across all open docs.
+                let lsp_client = self
+                    .editor
+                    .documents()
+                    .filter_map(|d| {
+                        d.language_servers_with_feature(
+                            helix_core::syntax::config::LanguageServerFeature::WorkspaceSymbols,
+                        )
+                        .next()
+                    })
+                    .next();
+                let Some(lsp_client) = lsp_client else {
+                    let _ = reply.send(Err(JsonRpcError {
+                        code: JsonRpcErrorCode::NoLspForLanguage,
+                        message: "no LSP supporting workspace-symbols".into(),
+                        data: None,
+                    }));
+                    return;
+                };
+
+                let (workspace, _) = helix_loader::find_workspace();
+                let workspace_clone = workspace.clone();
+                let future = match lsp_client.workspace_symbols(query.clone()) {
+                    Some(f) => f,
+                    None => {
+                        let _ = reply.send(Err(JsonRpcError {
+                            code: JsonRpcErrorCode::NoLspForLanguage,
+                            message: "LSP server does not support workspace-symbols".into(),
+                            data: None,
+                        }));
+                        return;
+                    }
+                };
+
+                spawn_lsp_request(
+                    reply,
+                    future,
+                    move |resp: Option<lsp::WorkspaceSymbolResponse>| {
+                        let symbols = flatten_workspace_symbol_response(resp)
+                            .into_iter()
+                            .filter_map(|(name, kind, location, container_name)| {
+                                let path_abs = location.uri.to_file_path().ok()?;
+                                let path_rel = path_abs
+                                    .strip_prefix(&workspace_clone)
+                                    .map(|p| p.to_string_lossy().into_owned())
+                                    .unwrap_or_else(|_| path_abs.to_string_lossy().into_owned());
+                                Some(helix_context_schema::LspSymbolInfo {
+                                    name,
+                                    kind: lsp_symbol_kind_to_string(kind),
+                                    location: helix_context_schema::LspLocation {
+                                        path: path_rel,
+                                        path_abs: path_abs.to_string_lossy().into_owned(),
+                                        range: helix_context_schema::LspRange {
+                                            start: helix_context_schema::LspPosition {
+                                                line: location.range.start.line,
+                                                character: location.range.start.character,
+                                            },
+                                            end: helix_context_schema::LspPosition {
+                                                line: location.range.end.line,
+                                                character: location.range.end.character,
+                                            },
+                                        },
+                                    },
+                                    container_name,
+                                })
+                            })
+                            .collect();
+                        helix_context_schema::ControlResponse::GetWorkspaceSymbols { symbols }
+                    },
+                );
+                return;
             }
         };
 
