@@ -744,6 +744,12 @@ impl Application {
                     return true;
                 }
             }
+            EditorEvent::ControlRequest { request: _, reply } => {
+                // TODO(control-socket): dispatch to the real handler once it is
+                // implemented. For now, dropping `reply` signals InternalError
+                // to the sender side via RecvError::Closed.
+                drop(reply);
+            }
         }
 
         false

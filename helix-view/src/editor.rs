@@ -1455,7 +1455,6 @@ pub struct ClippingConfiguration {
 
 pub type Motion = Box<dyn Fn(&mut Editor)>;
 
-#[derive(Debug)]
 pub enum EditorEvent {
     DocumentSaved(DocumentSavedEventResult),
     ConfigEvent(ConfigEvent),
@@ -1463,6 +1462,36 @@ pub enum EditorEvent {
     DebuggerEvent((DebugAdapterId, dap::Payload)),
     IdleTimer,
     Redraw,
+    /// A JSON-RPC request arrived on the control socket. The `reply` channel
+    /// must be used exactly once — either with a `ControlResponse` or by
+    /// being dropped (which surfaces as `RecvError::Closed` on the sender
+    /// side and is mapped to `JsonRpcErrorCode::InternalError`).
+    ControlRequest {
+        request: helix_context_schema::ControlRequest,
+        reply: tokio::sync::oneshot::Sender<
+            Result<helix_context_schema::ControlResponse, helix_context_schema::JsonRpcError>,
+        >,
+    },
+}
+
+impl std::fmt::Debug for EditorEvent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::DocumentSaved(v) => f.debug_tuple("DocumentSaved").field(v).finish(),
+            Self::ConfigEvent(v) => f.debug_tuple("ConfigEvent").field(v).finish(),
+            Self::LanguageServerMessage(v) => {
+                f.debug_tuple("LanguageServerMessage").field(v).finish()
+            }
+            Self::DebuggerEvent(v) => f.debug_tuple("DebuggerEvent").field(v).finish(),
+            Self::IdleTimer => f.write_str("IdleTimer"),
+            Self::Redraw => f.write_str("Redraw"),
+            Self::ControlRequest { request, .. } => f
+                .debug_struct("ControlRequest")
+                .field("request", request)
+                .field("reply", &"<oneshot::Sender>")
+                .finish(),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
