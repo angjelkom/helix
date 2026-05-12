@@ -193,6 +193,47 @@ fn ensure_buffer_mode_safe(
     Ok(())
 }
 
+/// Spawn an LSP request future as a detached tokio task. The task awaits
+/// the future with a 10-second timeout and sends the result back via the
+/// originating oneshot. The editor event loop is unblocked instantly.
+///
+/// `convert` is called from the task to map the LSP response into a
+/// ControlResponse. `convert` is `Send + 'static` and runs off the
+/// editor thread; it should not touch &Editor or any of its derivatives.
+#[allow(dead_code)]
+fn spawn_lsp_request<F, T, C>(
+    reply: tokio::sync::oneshot::Sender<
+        Result<
+            helix_context_schema::ControlResponse,
+            helix_context_schema::JsonRpcError,
+        >,
+    >,
+    future: F,
+    convert: C,
+) where
+    F: std::future::Future<Output = Result<T, helix_lsp::Error>> + Send + 'static,
+    T: Send + 'static,
+    C: FnOnce(T) -> helix_context_schema::ControlResponse + Send + 'static,
+{
+    use helix_context_schema::{JsonRpcError, JsonRpcErrorCode};
+    tokio::spawn(async move {
+        let resp = match tokio::time::timeout(std::time::Duration::from_secs(10), future).await {
+            Ok(Ok(value)) => Ok(convert(value)),
+            Ok(Err(e)) => Err(JsonRpcError {
+                code: JsonRpcErrorCode::InternalError,
+                message: format!("LSP error: {}", e),
+                data: None,
+            }),
+            Err(_) => Err(JsonRpcError {
+                code: JsonRpcErrorCode::LspTimeout,
+                message: "LSP request timed out after 10s".into(),
+                data: None,
+            }),
+        };
+        let _ = reply.send(resp);
+    });
+}
+
 /// Awaits a control request from the optional channel. If the channel is
 /// `None` (control socket disabled) returns a future that never resolves —
 /// so the `select!` arm is effectively disabled.
