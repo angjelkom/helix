@@ -1632,6 +1632,7 @@ impl Application {
                         &workspace,
                         &cfg,
                         helix_context_schema::UpdateSource::Manual,
+                        None,  // Phase 2c Task 6 will plumb the real Instance here
                     );
                     Ok(ControlResponse::CurrentState {
                         active: snap.active,
