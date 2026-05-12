@@ -241,3 +241,94 @@ fn ok_response_serializes_with_empty_result() {
     assert_eq!(j["method"], "ok");
     assert_eq!(j["result"], serde_json::json!({}));
 }
+
+use helix_context_schema::{
+    LspDiagnostic, LspHover, LspLocation, LspPosition, LspRange, LspSymbolInfo,
+};
+
+#[test]
+fn lsp_position_serializes_zero_indexed() {
+    let p = LspPosition { line: 0, character: 0 };
+    let j = serde_json::to_value(&p).unwrap();
+    assert_eq!(j["line"], 0);
+    assert_eq!(j["character"], 0);
+}
+
+#[test]
+fn lsp_range_round_trips() {
+    let r = LspRange {
+        start: LspPosition { line: 0, character: 5 },
+        end: LspPosition { line: 2, character: 10 },
+    };
+    let j = serde_json::to_value(&r).unwrap();
+    let back: LspRange = serde_json::from_value(j).unwrap();
+    assert_eq!(back.start.line, 0);
+    assert_eq!(back.end.character, 10);
+}
+
+#[test]
+fn lsp_location_round_trips() {
+    let loc = LspLocation {
+        path: "src/main.rs".into(),
+        path_abs: "/repo/src/main.rs".into(),
+        range: LspRange {
+            start: LspPosition { line: 0, character: 0 },
+            end: LspPosition { line: 0, character: 5 },
+        },
+    };
+    let j = serde_json::to_value(&loc).unwrap();
+    assert_eq!(j["path"], "src/main.rs");
+    let back: LspLocation = serde_json::from_value(j).unwrap();
+    assert_eq!(back.path_abs, "/repo/src/main.rs");
+}
+
+#[test]
+fn lsp_hover_omits_optional_range() {
+    let h = LspHover { contents: "fn foo()".into(), range: None };
+    let j = serde_json::to_value(&h).unwrap();
+    assert!(j.get("range").is_none() || j["range"].is_null());
+    assert_eq!(j["contents"], "fn foo()");
+}
+
+#[test]
+fn lsp_diagnostic_serializes_with_all_fields() {
+    let d = LspDiagnostic {
+        range: LspRange {
+            start: LspPosition { line: 5, character: 10 },
+            end: LspPosition { line: 5, character: 15 },
+        },
+        severity: Some("error".into()),
+        code: Some("E0308".into()),
+        source: Some("rustc".into()),
+        message: "expected `u32`, found `String`".into(),
+    };
+    let j = serde_json::to_value(&d).unwrap();
+    assert_eq!(j["severity"], "error");
+    assert_eq!(j["code"], "E0308");
+    assert_eq!(j["source"], "rustc");
+    assert_eq!(j["message"], "expected `u32`, found `String`");
+    let back: LspDiagnostic = serde_json::from_value(j).unwrap();
+    assert_eq!(back.range.start.line, 5);
+}
+
+#[test]
+fn lsp_symbol_info_round_trips() {
+    let s = LspSymbolInfo {
+        name: "main".into(),
+        kind: "function".into(),
+        location: LspLocation {
+            path: "src/main.rs".into(),
+            path_abs: "/repo/src/main.rs".into(),
+            range: LspRange {
+                start: LspPosition { line: 0, character: 0 },
+                end: LspPosition { line: 4, character: 1 },
+            },
+        },
+        container_name: None,
+    };
+    let j = serde_json::to_value(&s).unwrap();
+    assert_eq!(j["name"], "main");
+    assert!(j.get("container_name").is_none() || j["container_name"].is_null());
+    let back: LspSymbolInfo = serde_json::from_value(j).unwrap();
+    assert_eq!(back.kind, "function");
+}
