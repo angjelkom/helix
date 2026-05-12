@@ -1695,6 +1695,14 @@ impl Component for EditorView {
                         context.editor.set_error(format!("{}", e));
                     }
                 }
+                if context.editor.config().context_logger.enabled {
+                    if let Err(e) = crate::context_logger::write_context_file(
+                        context.editor,
+                        helix_context_schema::UpdateSource::FocusLost,
+                    ) {
+                        log::warn!("context_logger: failed to write snapshot: {}", e);
+                    }
+                }
                 self.terminal_focused = false;
                 EventResult::Consumed(None)
             }
