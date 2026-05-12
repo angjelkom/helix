@@ -3,7 +3,7 @@
 //! `Application::start_control_server`.
 
 use tokio::net::UnixListener;
-use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::mpsc::Sender;
 
 use helix_view::editor::EditorEvent;
 
@@ -12,7 +12,7 @@ use crate::control_socket::framing::{FrameReader, FrameWriter};
 
 /// Accept connections forever and spawn a per-connection task for each.
 /// Returns when the listener is dropped (which happens on Application::close).
-pub async fn run_accept_loop(listener: UnixListener, control_tx: UnboundedSender<EditorEvent>) {
+pub async fn run_accept_loop(listener: UnixListener, control_tx: Sender<EditorEvent>) {
     loop {
         match listener.accept().await {
             Ok((stream, _addr)) => {
@@ -28,7 +28,7 @@ pub async fn run_accept_loop(listener: UnixListener, control_tx: UnboundedSender
 
 async fn handle_connection(
     stream: tokio::net::UnixStream,
-    control_tx: UnboundedSender<EditorEvent>,
+    control_tx: Sender<EditorEvent>,
 ) {
     let (read_half, write_half) = stream.into_split();
     let mut reader = FrameReader::new(read_half);
@@ -62,7 +62,7 @@ async fn handle_connection(
                     request: req,
                     reply: reply_tx,
                 };
-                if control_tx.send(event).is_err() {
+                if control_tx.send(event).await.is_err() {
                     // Receiver dropped — editor is shutting down.
                     log::warn!("control-socket: control_tx send failed; editor likely shutting down");
                     break;
@@ -107,7 +107,7 @@ mod tests {
         };
         let binding = bind_socket(resolved).unwrap();
 
-        let (control_tx, _control_rx) = tokio::sync::mpsc::unbounded_channel::<helix_view::editor::EditorEvent>();
+        let (control_tx, _control_rx) = tokio::sync::mpsc::channel::<helix_view::editor::EditorEvent>(64);
         let server = tokio::spawn(run_accept_loop(binding.listener, control_tx));
 
         let mut client = tokio::net::UnixStream::connect(&socket_path).await.unwrap();
