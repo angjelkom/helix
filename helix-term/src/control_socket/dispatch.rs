@@ -48,7 +48,12 @@ fn handle_initialize(
             version: env!("CARGO_PKG_VERSION").into(),
         },
         capabilities: ServerCapabilities {
-            read_methods: vec!["initialize".into()],
+            read_methods: vec![
+                "initialize".into(),
+                "current-state".into(),
+                "get-open-buffers".into(),
+                "get-buffer-text".into(),
+            ],
             write_methods: vec![],
         },
     })
@@ -68,7 +73,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn initialize_compatible_version_returns_ok() {
+    fn initialize_advertises_all_phase_2b_read_methods() {
         let req = ControlRequest::Initialize {
             protocol_version: "1.0".into(),
             client_info: ClientInfo { name: "t".into(), version: "0.1".into() },
@@ -77,7 +82,12 @@ mod tests {
         let ControlResponse::Initialize { capabilities, .. } = resp else {
             panic!("expected Initialize response");
         };
-        assert!(capabilities.read_methods.contains(&"initialize".to_string()));
+        let methods = &capabilities.read_methods;
+        assert!(methods.contains(&"initialize".to_string()), "missing initialize");
+        assert!(methods.contains(&"current-state".to_string()), "missing current-state");
+        assert!(methods.contains(&"get-open-buffers".to_string()), "missing get-open-buffers");
+        assert!(methods.contains(&"get-buffer-text".to_string()), "missing get-buffer-text");
+        assert!(capabilities.write_methods.is_empty(), "write methods come in Phase 2c");
     }
 
     #[test]
