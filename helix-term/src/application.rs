@@ -74,7 +74,7 @@ type Terminal = tui::terminal::Terminal<TerminalBackend>;
 /// so the caller can unlink it on shutdown.
 fn start_control_socket(
     editor: &helix_view::Editor,
-    control_tx: tokio::sync::mpsc::UnboundedSender<helix_view::editor::EditorEvent>,
+    control_tx: tokio::sync::mpsc::Sender<helix_view::editor::EditorEvent>,
 ) -> std::io::Result<crate::control_socket::path::Resolved> {
     use crate::control_socket::{lifecycle, path, server};
 
@@ -148,7 +148,7 @@ fn resolve_buffer<'a>(
 /// `None` (control socket disabled) returns a future that never resolves —
 /// so the `select!` arm is effectively disabled.
 async fn recv_control_request(
-    rx: &mut Option<tokio::sync::mpsc::UnboundedReceiver<helix_view::editor::EditorEvent>>,
+    rx: &mut Option<tokio::sync::mpsc::Receiver<helix_view::editor::EditorEvent>>,
 ) -> Option<helix_view::editor::EditorEvent> {
     match rx {
         Some(rx) => rx.recv().await,
@@ -179,7 +179,7 @@ pub struct Application {
     /// tasks; processed by `handle_control_request` in the main event loop.
     /// `None` when the control socket isn't enabled.
     control_request_rx:
-        Option<tokio::sync::mpsc::UnboundedReceiver<helix_view::editor::EditorEvent>>,
+        Option<tokio::sync::mpsc::Receiver<helix_view::editor::EditorEvent>>,
 }
 
 #[cfg(feature = "integration")]
@@ -373,7 +373,7 @@ impl Application {
         .context("build signal handler")?;
 
         let (control_socket_binding, control_request_rx) = if editor.config().control_socket.enabled {
-            let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<helix_view::editor::EditorEvent>();
+            let (tx, rx) = tokio::sync::mpsc::channel::<helix_view::editor::EditorEvent>(64);
             match start_control_socket(&editor, tx) {
                 Ok(resolved) => (Some(resolved), Some(rx)),
                 Err(e) => {
