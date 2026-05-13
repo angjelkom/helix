@@ -127,6 +127,19 @@ pub enum ControlRequest {
         #[serde(skip_serializing_if = "Option::is_none", default)]
         path: Option<String>,
     },
+    /// Replace the buffer's selection with a single range from
+    /// (`start_line`, `start_column`) to (`end_line`, `end_column`),
+    /// 1-indexed inclusive. `start` becomes the anchor; `end` becomes
+    /// the head (cursor position). Columns are clamped to line length.
+    /// View is recentered on the head so the user sees what was selected.
+    SelectRange {
+        start_line: usize,
+        start_column: usize,
+        end_line: usize,
+        end_column: usize,
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        path: Option<String>,
+    },
     GetDiagnostics {
         #[serde(skip_serializing_if = "Option::is_none", default)]
         path: Option<String>,
