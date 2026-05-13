@@ -140,7 +140,23 @@ impl ServerHandler for HelixMcpServer {
                     }
                 }
             }
-            // The other six variants land in tasks 4-6 — bail for now.
+            ToolKind::HelixGotoLine => {
+                match serde_json::from_value::<HelixGotoLineArgs>(args_val) {
+                    Ok(a) => ControlRequest::GotoLine {
+                        line: a.line,
+                        column: a.column,
+                        path: a.path,
+                    },
+                    Err(e) => return Ok(tool_error(format!("Invalid arguments for helix_goto_line: {}", e))),
+                }
+            }
+            ToolKind::HelixGetDiagnostics => {
+                match serde_json::from_value::<HelixGetDiagnosticsArgs>(args_val) {
+                    Ok(a) => ControlRequest::GetDiagnostics { path: a.path },
+                    Err(e) => return Ok(tool_error(format!("Invalid arguments for helix_get_diagnostics: {}", e))),
+                }
+            }
+            // The other four variants land in tasks 5-6 — bail for now.
             _ => {
                 return Ok(tool_error(format!(
                     "Tool {} not yet implemented (Phase 4b in progress)",
