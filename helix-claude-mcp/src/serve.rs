@@ -178,12 +178,23 @@ impl ServerHandler for HelixMcpServer {
                     Err(e) => return Ok(tool_error(format!("Invalid arguments for helix_get_definition: {}", e))),
                 }
             }
-            // The other two variants land in task 6 — bail for now.
-            _ => {
-                return Ok(tool_error(format!(
-                    "Tool {} not yet implemented (Phase 4b in progress)",
-                    name
-                )))
+            ToolKind::HelixGetReferences => {
+                match serde_json::from_value::<HelixGetReferencesArgs>(args_val) {
+                    Ok(a) => ControlRequest::GetReferencesAt {
+                        line: a.line,
+                        column: a.column,
+                        path: a.path,
+                        allow_insert_mode: a.allow_insert_mode,
+                        include_declaration: a.include_declaration,
+                    },
+                    Err(e) => return Ok(tool_error(format!("Invalid arguments for helix_get_references: {}", e))),
+                }
+            }
+            ToolKind::HelixGetWorkspaceSymbols => {
+                match serde_json::from_value::<HelixGetWorkspaceSymbolsArgs>(args_val) {
+                    Ok(a) => ControlRequest::GetWorkspaceSymbols { query: a.query },
+                    Err(e) => return Ok(tool_error(format!("Invalid arguments for helix_get_workspace_symbols: {}", e))),
+                }
             }
         };
 
