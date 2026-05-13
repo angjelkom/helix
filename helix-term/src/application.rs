@@ -2030,15 +2030,14 @@ impl Application {
                 let selection = helix_core::Selection::point(char_idx);
                 doc.set_selection(view_id, selection);
 
-                // Scroll the view if the target line is off-screen. Unlike
-                // `helix_select` (which always recenters so the user sees
-                // the whole selection), goto-line only scrolls when needed
-                // and keeps the cursor inside the standard scrolloff
-                // margin — matches what a user typing `:goto <line>` sees.
+                // Center the target line in the view. Claude jumps to lines
+                // it's about to discuss with the user, so always recentering
+                // gives the user context above and below — same default we
+                // use for `helix_select`.
                 let scrolloff = self.editor.config().scrolloff;
                 if let Some(view) = self.editor.tree.try_get(view_id) {
                     if let Some(doc) = self.editor.documents.get_mut(&doc_id) {
-                        view.ensure_cursor_in_view(doc, scrolloff);
+                        view.ensure_cursor_in_view_center(doc, scrolloff);
                     }
                 }
 
