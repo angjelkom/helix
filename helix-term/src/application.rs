@@ -2404,12 +2404,77 @@ impl Application {
                     data: None,
                 })
             }
-            ControlRequest::RunCommand { .. } => {
-                Err(JsonRpcError {
-                    code: JsonRpcErrorCode::MethodNotFound,
-                    message: "run-command handler not yet implemented".into(),
-                    data: None,
-                })
+            ControlRequest::RunCommand { name, args } => {
+                use crate::commands::typed::TYPABLE_COMMAND_MAP;
+                use helix_core::command_line::Args as CmdArgs;
+                use helix_view::expansion;
+
+                let Some(cmd) = TYPABLE_COMMAND_MAP.get(name.as_str()) else {
+                    let _ = reply.send(Err(JsonRpcError {
+                        code: JsonRpcErrorCode::InvalidParams,
+                        message: format!("unknown typable command: {}", name),
+                        data: None,
+                    }));
+                    return;
+                };
+
+                let args_str = args.join(" ");
+                let args_parsed = match CmdArgs::parse(
+                    &args_str,
+                    cmd.signature,
+                    true,
+                    |token| {
+                        expansion::expand(&self.editor, token)
+                            .map_err(|e| e.into())
+                    },
+                ) {
+                    Ok(a) => a,
+                    Err(e) => {
+                        let _ = reply.send(Err(JsonRpcError {
+                            code: JsonRpcErrorCode::InvalidParams,
+                            message: format!("invalid args for {}: {}", name, e),
+                            data: None,
+                        }));
+                        return;
+                    }
+                };
+
+                let mut cx = crate::compositor::Context {
+                    editor: &mut self.editor,
+                    scroll: None,
+                    jobs: &mut self.jobs,
+                };
+
+                let result = (cmd.fun)(&mut cx, args_parsed, crate::ui::PromptEvent::Validate);
+
+                // Capture the editor's last status message, if any.
+                let message = self
+                    .editor
+                    .get_status()
+                    .map(|(text, _severity)| text.to_string());
+
+                match result {
+                    Ok(()) => {
+                        // Rewrite the snapshot — run-command may have mutated state.
+                        let instance = self.control_socket_binding.as_ref().map(|s| s.to_instance());
+                        if let Err(e) = crate::context_logger::write_context_file(
+                            &self.editor,
+                            helix_context_schema::UpdateSource::McpCommand,
+                            instance,
+                        ) {
+                            log::warn!("control-socket: snapshot rewrite failed after run-command: {}", e);
+                        }
+                        let _ = reply.send(Ok(ControlResponse::RunCommand { message }));
+                    }
+                    Err(e) => {
+                        let _ = reply.send(Err(JsonRpcError {
+                            code: JsonRpcErrorCode::InternalError,
+                            message: format!("command '{}' failed: {}", name, e),
+                            data: None,
+                        }));
+                    }
+                }
+                return;
             }
         };
 
