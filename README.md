@@ -160,8 +160,8 @@ Tools (live RPC to the editor):
 
 | Tool | What it does |
 |---|---|
-| `helix_open_file` | Open a file in Helix and focus it. |
-| `helix_goto_line` | Move cursor to a 1-indexed line/column. |
+| `helix_open_file` | Open a file in Helix. Optional `line`/`column` jump and center the view (useful as a "show me where you're about to edit" call). |
+| `helix_goto_line` | Move cursor to a 1-indexed line/column; view recenters on the line. |
 | `helix_select` | Select a range from `(start_line, start_column)` to `(end_line, end_column)`; view recenters. |
 | `helix_get_diagnostics` | LSP diagnostics for a buffer. |
 | `helix_get_hover` | LSP hover at a position. |

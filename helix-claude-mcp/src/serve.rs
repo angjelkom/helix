@@ -131,7 +131,11 @@ impl ServerHandler for HelixMcpServer {
         let request = match kind {
             ToolKind::HelixOpenFile => {
                 match serde_json::from_value::<HelixOpenFileArgs>(args_val) {
-                    Ok(a) => ControlRequest::OpenFile { path: a.path },
+                    Ok(a) => ControlRequest::OpenFile {
+                        path: a.path,
+                        line: a.line,
+                        column: a.column,
+                    },
                     Err(e) => {
                         return Ok(tool_error(format!(
                             "Invalid arguments for helix_open_file: {}",
