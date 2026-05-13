@@ -78,4 +78,80 @@ All tools require Helix to be running with `[editor.control-socket] enabled = tr
 ## Subcommands
 
 - `helix-claude-mcp serve` — stdio MCP server.
-- `helix-claude-mcp hook` — UserPromptSubmit hook handler. *(Phase 5 — not yet implemented.)*
+- `helix-claude-mcp hook` — UserPromptSubmit hook handler (see below).
+
+## Hook subcommand
+
+`helix-claude-mcp hook` is the Rust replacement for the shell hook script at `~/.claude/hooks/helix-context.sh`. Same wire contract — reads Claude Code's hook payload on stdin, writes the wrapped snapshot to stdout (or nothing if skipped). Use it in two places:
+
+### UserPromptSubmit
+
+Inject the snapshot at the start of every prompt (skipped when already-injected or when the snapshot's `last_update_source: "mcp_command"`):
+
+```json
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          { "type": "command", "command": "helix-claude-mcp hook", "timeout": 5 }
+        ]
+      }
+    ]
+  }
+}
+```
+
+### Compression-aware reset
+
+When Claude Code compacts the context (auto or `/compact`), the previously-injected snapshot is gone. Clear the marker so the next prompt re-injects:
+
+```json
+{
+  "hooks": {
+    "PostCompact": [
+      {
+        "hooks": [
+          { "type": "command", "command": "helix-claude-mcp hook --reset-marker", "timeout": 5 }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "compact",
+        "hooks": [
+          { "type": "command", "command": "helix-claude-mcp hook --reset-marker", "timeout": 5 }
+        ]
+      }
+    ]
+  }
+}
+```
+
+### How it dedupes
+
+Marker file at `$XDG_RUNTIME_DIR/claude-helix/marker-${session_id}` (Linux) or `~/Library/Caches/claude-helix/marker-${session_id}` (macOS) holds the snapshot's mtime at last injection. On each call:
+
+1. Parse stdin (must contain `session_id` and `cwd`; serde drops unknown fields).
+2. Locate the snapshot at `$CLAUDE_PROJECT_DIR/.helix/context.json` (or walk up from `cwd`).
+3. Skip if missing, > 24h stale, malformed, or `last_update_source == "mcp_command"`.
+4. Skip if marker mtime matches snapshot mtime (already injected this session).
+5. Otherwise: emit wrapped snapshot, then write snapshot mtime into the marker file.
+
+Failure modes (stdin parse error, marker write failure, etc.) exit 0 silently — the hook is best-effort and never fails the user's prompt.
+
+## Migrating from the shell hook
+
+If you previously used the shell hook at `~/.claude/hooks/helix-context.sh`, replace your `~/.claude/settings.json` hooks block. The shell hook can be deleted after switching; nothing references it.
+
+Old:
+```json
+{ "type": "command", "command": "/Users/you/.claude/hooks/helix-context.sh" }
+```
+
+New:
+```json
+{ "type": "command", "command": "helix-claude-mcp hook", "timeout": 5 }
+```
+
+The Rust hook is functionally a superset of the shell version: same emit format, plus proper per-session dedup (the shell version had none — it re-emitted on every prompt) and `--reset-marker` for compression.
