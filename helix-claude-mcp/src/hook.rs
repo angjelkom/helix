@@ -263,11 +263,9 @@ fn emit_wrapped_snapshot(snapshot_path: &Path) -> Result<()> {
     Ok(())
 }
 
-// Shared across all test submodules. Tests that mutate process-global env
-// vars (XDG_RUNTIME_DIR, CLAUDE_PROJECT_DIR) acquire this lock to avoid
-// racing when cargo runs them on threads of the same process.
-#[cfg(test)]
-static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+// Tests that mutate process-global env vars (XDG_RUNTIME_DIR,
+// CLAUDE_PROJECT_DIR) acquire `crate::TEST_ENV_LOCK` to avoid racing
+// across modules.
 
 #[cfg(test)]
 mod tests {
@@ -304,7 +302,7 @@ mod tests {
 
     #[test]
     fn marker_dir_uses_xdg_runtime_dir_when_set() {
-        let _lock = super::TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _lock = crate::TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let saved = std::env::var_os("XDG_RUNTIME_DIR");
         std::env::set_var("XDG_RUNTIME_DIR", "/tmp/test-xdg");
         let dir = marker_dir();
@@ -317,7 +315,7 @@ mod tests {
 
     #[test]
     fn marker_path_embeds_session_id() {
-        let _lock = super::TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _lock = crate::TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let saved = std::env::var_os("XDG_RUNTIME_DIR");
         std::env::set_var("XDG_RUNTIME_DIR", "/tmp/x");
         let p = marker_path("abc-123");
@@ -330,7 +328,7 @@ mod tests {
 
     #[test]
     fn marker_path_sanitizes_dangerous_session_id() {
-        let _lock = super::TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _lock = crate::TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let saved_xdg = std::env::var_os("XDG_RUNTIME_DIR");
         std::env::set_var("XDG_RUNTIME_DIR", "/tmp/x");
         let p = marker_path("../etc/passwd");
@@ -439,7 +437,7 @@ mod decide_tests {
 
     #[test]
     fn decide_skips_when_snapshot_not_found() {
-        let _lock = super::TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _lock = crate::TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let _saved = isolate_env();
         let tmp = tempfile::TempDir::new().unwrap();
         let input = input_at(tmp.path(), "s1");
@@ -453,7 +451,7 @@ mod decide_tests {
 
     #[test]
     fn decide_skips_when_source_is_mcp_command() {
-        let _lock = super::TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _lock = crate::TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let saved = isolate_env();
         let tmp = tempfile::TempDir::new().unwrap();
         std::env::set_var("XDG_RUNTIME_DIR", tmp.path());
@@ -477,7 +475,7 @@ mod decide_tests {
 
     #[test]
     fn decide_emits_when_source_is_focus_lost() {
-        let _lock = super::TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _lock = crate::TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let saved = isolate_env();
         let tmp = tempfile::TempDir::new().unwrap();
         std::env::set_var("XDG_RUNTIME_DIR", tmp.path());
@@ -498,7 +496,7 @@ mod decide_tests {
 
     #[test]
     fn decide_emits_when_source_is_manual() {
-        let _lock = super::TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _lock = crate::TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let saved = isolate_env();
         let tmp = tempfile::TempDir::new().unwrap();
         std::env::set_var("XDG_RUNTIME_DIR", tmp.path());
@@ -519,7 +517,7 @@ mod decide_tests {
 
     #[test]
     fn decide_skips_when_marker_matches_mtime() {
-        let _lock = super::TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _lock = crate::TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let saved = isolate_env();
         let tmp = tempfile::TempDir::new().unwrap();
         std::env::set_var("XDG_RUNTIME_DIR", tmp.path());

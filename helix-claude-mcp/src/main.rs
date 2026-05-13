@@ -14,6 +14,13 @@ mod rpc_client;
 mod serve;
 mod tools;
 
+/// Shared serialization point for test threads that mutate process-global
+/// env vars (XDG_RUNTIME_DIR, CLAUDE_PROJECT_DIR). Lives at the crate root
+/// so every test module that touches the same vars goes through one lock —
+/// per-module mutexes wouldn't coordinate across modules.
+#[cfg(test)]
+pub(crate) static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[derive(Parser)]
 #[command(name = "helix-claude-mcp", version)]
 #[command(about = "MCP bridge for the Helix editor's control socket")]
