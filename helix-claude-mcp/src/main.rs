@@ -7,6 +7,7 @@
 
 use clap::{Parser, Subcommand};
 
+mod discovery;
 mod rpc_client;
 
 #[derive(Parser)]
