@@ -4,18 +4,22 @@
 //! reserved for logs (env_logger). Run by Claude Code via the `.mcp.json`
 //! config in a project workspace.
 
+use std::sync::Arc;
+
 use anyhow::Result;
 use rmcp::{
     ServerHandler,
     model::{
-        AnnotateAble, ErrorCode, Implementation, InitializeResult, ListResourcesResult,
-        PaginatedRequestParams, RawResource, ReadResourceRequestParams, ReadResourceResult,
-        ResourceContents, ServerCapabilities, ServerInfo,
+        AnnotateAble, CallToolRequestParams, CallToolResult, Content, ErrorCode, Implementation,
+        InitializeResult, ListResourcesResult, ListToolsResult, PaginatedRequestParams, RawResource,
+        ReadResourceRequestParams, ReadResourceResult, ResourceContents, ServerCapabilities,
+        ServerInfo, Tool,
     },
     service::{RequestContext, RoleServer},
 };
 
 use crate::resources::{self, ResourceKind};
+use crate::tools::ToolKind;
 
 struct HelixMcpServer;
 
@@ -24,6 +28,7 @@ impl ServerHandler for HelixMcpServer {
         InitializeResult::new(
             ServerCapabilities::builder()
                 .enable_resources()
+                .enable_tools()
                 .build(),
         )
         .with_server_info(Implementation::new(
@@ -83,6 +88,28 @@ impl ServerHandler for HelixMcpServer {
             ResourceContents::text(body, uri).with_mime_type("application/json"),
         ]))
     }
+
+    async fn list_tools(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListToolsResult, rmcp::ErrorData> {
+        let tools: Vec<Tool> = ToolKind::all()
+            .map(|k| {
+                Tool::new(
+                    k.name(),
+                    k.description(),
+                    Arc::new(
+                        k.input_schema()
+                            .as_object()
+                            .expect("input_schema() always returns an object")
+                            .clone(),
+                    ),
+                )
+            })
+            .collect();
+        Ok(ListToolsResult::with_all_items(tools))
+    }
 }
 
 pub async fn run() -> Result<()> {
@@ -93,4 +120,63 @@ pub async fn run() -> Result<()> {
     service.waiting().await?;
 
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// dispatch_tool — discovery + RPC roundtrip adapter
+// ---------------------------------------------------------------------------
+
+use helix_context_schema::{ControlRequest, ControlResponse};
+
+/// Discover the Helix socket, send `request`, format the response as an
+/// MCP tool result. Pure adapter between Phase 4a's plumbing and rmcp's
+/// tool-result type.
+pub async fn dispatch_tool(request: ControlRequest) -> CallToolResult {
+    use crate::{discovery, rpc_client};
+
+    let socket = match discovery::find_helix_socket(None).await {
+        Ok(s) => s,
+        Err(e) => {
+            return tool_error(format!(
+                "Helix is not running in this workspace (no live control socket found): {}. \
+                 Start Helix with [editor.control-socket] enabled = true.",
+                e,
+            ))
+        }
+    };
+
+    match rpc_client::send_request(&socket, &request).await {
+        Ok(resp) => format_response_as_tool_result(resp),
+        Err(rpc_client::RpcError::HelixError(je)) => tool_error(format!(
+            "Helix rejected the request: {} (code {})",
+            je.message,
+            je.code as i32,
+        )),
+        Err(e) => tool_error(format!("Failed to communicate with Helix: {}", e)),
+    }
+}
+
+pub fn tool_error(message: String) -> CallToolResult {
+    CallToolResult::error(vec![Content::text(message)])
+}
+
+fn format_response_as_tool_result(resp: ControlResponse) -> CallToolResult {
+    let text = match resp {
+        ControlResponse::Ok {} => "{\"ok\":true}".to_string(),
+        other => serde_json::to_string(&other)
+            .unwrap_or_else(|_| "{\"error\":\"serialization failed\"}".to_string()),
+    };
+    CallToolResult::success(vec![Content::text(text)])
+}
+
+// ---------------------------------------------------------------------------
+// call_tool placeholder — filled in by Task 3
+// ---------------------------------------------------------------------------
+// NOTE: call_tool is NOT yet implemented. rmcp's default impl returns
+// Method Not Found, which is correct for Task 2. Tasks 3-6 add the arms.
+// The _params / _context parameters are referenced to keep the compiler
+// happy if we later add the impl here without touching other files.
+fn _call_tool_note(_params: CallToolRequestParams) {
+    // This function is never called; it just documents that call_tool
+    // landing here is intentional. Task 3 adds the real impl.
 }
