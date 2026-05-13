@@ -160,6 +160,15 @@ pub enum ControlRequest {
     GetWorkspaceSymbols {
         query: String,
     },
+    FormatDocument {
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        path: Option<String>,
+    },
+    RunCommand {
+        name: String,
+        #[serde(skip_serializing_if = "Vec::is_empty", default)]
+        args: Vec<String>,
+    },
 }
 
 /// All possible successful responses. The variant name (kebab-cased) matches
@@ -205,5 +214,12 @@ pub enum ControlResponse {
     },
     GetWorkspaceSymbols {
         symbols: Vec<LspSymbolInfo>,
+    },
+    FormatDocument {
+        applied: bool,
+    },
+    RunCommand {
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        message: Option<String>,
     },
 }

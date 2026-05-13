@@ -462,3 +462,67 @@ fn workspace_symbols_response_round_trips() {
     let j = serde_json::to_value(&resp).unwrap();
     assert_eq!(j["result"]["symbols"][0]["kind"], "function");
 }
+
+#[test]
+fn format_document_request_with_optional_path() {
+    let req = ControlRequest::FormatDocument { path: Some("src/main.rs".into()) };
+    let j = serde_json::to_value(&req).unwrap();
+    assert_eq!(j["method"], "format-document");
+    assert_eq!(j["params"]["path"], "src/main.rs");
+}
+
+#[test]
+fn format_document_request_with_no_path_omits_field() {
+    let req = ControlRequest::FormatDocument { path: None };
+    let j = serde_json::to_value(&req).unwrap();
+    assert_eq!(j["method"], "format-document");
+    assert!(j["params"].get("path").is_none() || j["params"]["path"].is_null());
+}
+
+#[test]
+fn format_document_response_round_trips() {
+    let resp = ControlResponse::FormatDocument { applied: true };
+    let j = serde_json::to_value(&resp).unwrap();
+    assert_eq!(j["method"], "format-document");
+    assert_eq!(j["result"]["applied"], true);
+    let back: ControlResponse = serde_json::from_value(j).unwrap();
+    let ControlResponse::FormatDocument { applied } = back else {
+        panic!("wrong variant");
+    };
+    assert!(applied);
+}
+
+#[test]
+fn run_command_request_with_no_args_omits_field() {
+    let req = ControlRequest::RunCommand { name: "write".into(), args: vec![] };
+    let j = serde_json::to_value(&req).unwrap();
+    assert_eq!(j["method"], "run-command");
+    assert_eq!(j["params"]["name"], "write");
+    assert!(j["params"].get("args").is_none() || j["params"]["args"].as_array().map(|a| a.is_empty()).unwrap_or(true));
+}
+
+#[test]
+fn run_command_request_with_args() {
+    let req = ControlRequest::RunCommand {
+        name: "open".into(),
+        args: vec!["src/main.rs".into()],
+    };
+    let j = serde_json::to_value(&req).unwrap();
+    assert_eq!(j["params"]["args"][0], "src/main.rs");
+}
+
+#[test]
+fn run_command_response_with_message_round_trips() {
+    let resp = ControlResponse::RunCommand {
+        message: Some("written 5 buffers".into()),
+    };
+    let j = serde_json::to_value(&resp).unwrap();
+    assert_eq!(j["result"]["message"], "written 5 buffers");
+}
+
+#[test]
+fn run_command_response_with_no_message_omits_field() {
+    let resp = ControlResponse::RunCommand { message: None };
+    let j = serde_json::to_value(&resp).unwrap();
+    assert!(j["result"].get("message").is_none() || j["result"]["message"].is_null());
+}
