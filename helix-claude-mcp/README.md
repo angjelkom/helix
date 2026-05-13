@@ -67,6 +67,8 @@ Phase 4b shipped these tools. Claude Code can call any of them via MCP `tools/ca
 | `helix_get_definition` | LSP goto-definition. |
 | `helix_get_references` | LSP find-references. |
 | `helix_get_workspace_symbols` | LSP workspace symbol search. |
+| `helix_format_document` | Format a buffer using its LSP formatter. |
+| `helix_run_command` | Execute any Helix typable command. **Powerful** — can write files, reload config, run shell commands. Use with care. |
 
 All tools require Helix to be running with `[editor.control-socket] enabled = true`. When Helix isn't running, tools return a clear "not running" error message.
 
