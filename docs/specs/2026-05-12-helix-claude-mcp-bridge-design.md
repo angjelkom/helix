@@ -1,9 +1,11 @@
 # Helix ↔ Claude Code Bridge — Design Spec
 
-**Status:** Draft
-**Date:** 2026-05-12
+**Status:** Phases 1–6 shipped on `nightly` (2026-05-13)
+**Date:** 2026-05-12 (updated 2026-05-13)
 **Author:** Angjelko
 **Supersedes:** Extends `helix-term/src/context_logger.rs` (shipped 2026-05-11)
+
+This document is kept aligned with the implementation. Wire formats, response shapes, and field names in §6 reflect what the code actually does — earlier drafts have been corrected as drift was discovered.
 
 ## 1. Overview
 
@@ -180,7 +182,7 @@ When `enabled = false` (default): zero work, zero overhead, identical behavior t
 In order:
 1. `editor.control-socket.path` if non-empty (explicit override)
 2. `<workspace>/.helix/control-<pid>.sock` — the default for almost all users
-3. **macOS path-length fallback:** if the resolved path from (2) exceeds the platform's `sun_path` limit (104 bytes on macOS, 108 on Linux), fall back to `$XDG_RUNTIME_DIR/helix/control-<pid>-<workspace_hash>.sock` (or `$TMPDIR/...` on macOS) and write a small pointer file at `<workspace>/.helix/control-<pid>.sock.path` containing the real path. MCP-server discovery checks for `*.sock.path` pointers first.
+3. **Path-length fallback:** Unix `sun_path` is 104 bytes on macOS and 108 on Linux. The implementation uses a conservative 104-byte cap on both platforms (cheaper than `cfg` branching, and the extra 4 bytes on Linux rarely changes whether a path fits). If the resolved path from (2) exceeds the cap, fall back to `$XDG_RUNTIME_DIR/helix/control-<pid>-<workspace_hash>.sock` (or `$TMPDIR/...` on macOS) and write a small pointer file at `<workspace>/.helix/control-<pid>.sock.path` containing the real path. MCP-server discovery checks for `*.sock.path` pointers first.
 
 **Permissions race avoidance:** there is a window between `bind()` and a post-bind `chmod()` during which the socket inherits the process umask (typically `0o022` on most systems → 0644 default mode). On multi-user machines this is a real exposure. The implementation should:
 
@@ -237,11 +239,11 @@ pub enum EditorEvent {
 
 The variant carries a `oneshot::Sender` which does not implement `Debug`. Solution: hand-write `impl Debug for EditorEvent` — the existing `#[derive(Debug)]` is dropped, all six existing variants render the same way they do today (verified by `dbg!` output), and the new `ControlRequest` variant renders as `ControlRequest { request: ..., reply: <oneshot::Sender> }`. No new external dependency (don't pull in `derivative` or `educe` just for this).
 
-In `helix-term/src/application.rs::event_loop_until_idle`, add a new arm to `tokio::select!` (after `signal`, before `input_stream` — high priority but doesn't preempt OS signals):
+In `helix-term/src/application.rs::event_loop_until_idle`, add a new arm to `tokio::select!`. The arm sits after `input_stream` and the job callback channels, before `editor.wait_event()` — with `biased`, this gives local user keystrokes and pending jobs priority over MCP traffic, which matches the user-trust ordering (typing > Claude). The handler is invoked via a tiny `recv_control_request` helper so `Option<Receiver>` (the channel is `None` when the control socket is disabled) can use `pending()` to never fire:
 
 ```rust
-Some(EditorEvent::ControlRequest { request, reply }) = self.control_rx.recv() => {
-    self.handle_control_request(request, reply).await;
+Some(event) = recv_control_request(&mut self.control_request_rx) => {
+    self.handle_control_request(event);
 }
 ```
 
@@ -263,34 +265,47 @@ Pure read methods (current-state, get-hover-at, get-diagnostics) do not rewrite 
 
 ## 6. JSON-RPC method surface (Helix control socket)
 
-JSON-RPC 2.0 over a single-newline-delimited stream per connection. Each connection is one client (typically `helix-claude-mcp serve`).
+JSON-RPC-inspired framing over a single-newline-delimited stream per connection. **Not strictly JSON-RPC 2.0** — we drop the `jsonrpc: "2.0"` envelope and the `id` field, because each connection is single-flight (one request in flight, the response immediately follows). The `method` and `params` keys on the wire, plus the matching `method`/`result` shape on responses, retain JSON-RPC's idiom. Each connection is one client (typically `helix-claude-mcp serve`).
+
+Field names on the wire are `snake_case` throughout, matching every other field on the protocol (including the JSON snapshot schema).
 
 ### 6.1 Lifecycle
 
-- `initialize` — handshake. Client sends `{protocolVersion: "1.0", clientInfo: {name, version}}`; Helix returns `{protocolVersion, helixVersion, capabilities: {...}}`. Reject mismatched majors.
-- `shutdown` — graceful close request (server cleans up next connection accept).
+- `initialize` — handshake. Client sends `{protocol_version: "1.0", client_info: {name, version}}`; Helix returns `{protocol_version, helix_version, server_info, capabilities: {read_methods, write_methods}}`. Reject mismatched majors.
+
+(There is no `shutdown` method — per-connection close is implicit via socket close; no graceful cross-connection shutdown protocol exists.)
 
 ### 6.2 Read methods (no state mutation)
 
 | Method | Params | Returns |
 |---|---|---|
-| `current-state` | `{}` | Same shape as snapshot's `active` field |
-| `get-buffer-text` | `{buffer_id?: int, path?: string, range?: {start_line, end_line}}` | `{text, language}` |
-| `get-diagnostics` | `{path?: string}` (defaults to current file) | `{diagnostics: [...]}` |
-| `get-hover-at` | `{line, column, path?}` | `{contents: string \| null}` (LSP-backed) |
-| `get-definition-at` | `{line, column, path?}` | `{locations: [{path, line, column}]}` (LSP-backed) |
-| `get-references-at` | `{line, column, path?}` | `{locations: [{path, line, column, context_line}]}` (LSP-backed) |
-| `get-workspace-symbols` | `{query: string}` | `{symbols: [{name, kind, path, line}]}` (LSP-backed) |
-| `get-open-buffers` | `{}` | `{buffers: [...]}` |
+| `current-state` | `{}` | `{active: {...same shape as snapshot.active}, mode: string}` |
+| `get-buffer-text` | `{path?: string, range?: {start_line, end_line}}` | `{text, language?, line_count}` |
+| `get-diagnostics` | `{path?: string}` (defaults to current file) | `{diagnostics: [LspDiagnostic]}` |
+| `get-hover-at` | `{line, column, path?, allow_insert_mode?}` | `{hover: LspHover \| null}` (LSP-backed) |
+| `get-definition-at` | `{line, column, path?, allow_insert_mode?}` | `{locations: [LspLocation]}` (LSP-backed) |
+| `get-references-at` | `{line, column, path?, allow_insert_mode?, include_declaration?}` | `{locations: [LspLocation]}` (LSP-backed; `include_declaration` defaults `true`) |
+| `get-workspace-symbols` | `{query: string}` | `{symbols: [LspSymbolInfo]}` (LSP-backed) |
+| `get-open-buffers` | `{}` | `{buffers: [OpenBuffer]}` |
+
+Shared LSP types (defined in `helix-context-schema`):
+- `LspPosition`: `{line: u32, character: u32}` — 0-indexed, LSP semantics
+- `LspRange`: `{start: LspPosition, end: LspPosition}`
+- `LspLocation`: `{path: string, path_abs: string, range: LspRange}`
+- `LspHover`: `{contents: string, range?: LspRange}` (flattened from LSP's MarkupContent variants)
+- `LspDiagnostic`: `{range: LspRange, severity?: "error"|"warning"|"information"|"hint", code?, source?, message: string}`
+- `LspSymbolInfo`: `{name: string, kind: string, location: LspLocation, container_name?: string}`
 
 ### 6.3 Write methods (mutate state, trigger snapshot rewrite)
 
 | Method | Params | Returns |
 |---|---|---|
-| `open-file` | `{path, line?, column?}` | `{ok: true}` |
-| `goto-line` | `{line, column?, path?}` | `{ok: true}` |
-| `run-command` | `{name, args: []}` | `{ok: bool, output?: string}` |
-| `format-document` | `{path?}` | `{applied: bool}` |
+| `open-file` | `{path}` | `Ok {}` |
+| `goto-line` | `{line, column?, path?}` | `Ok {}` |
+| `run-command` | `{name, args: []}` | `{message?: string}` (last status text from the editor) |
+| `format-document` | `{path?}` | `{applied: bool}` (true once the format was kicked off; the LSP edits arrive asynchronously) |
+
+`open-file` and `goto-line` use the shared `Ok {}` variant — success is signaled by being on the Ok branch of the response. There is no `{ok: true}` payload field.
 
 ### 6.4 Error handling
 
@@ -325,11 +340,12 @@ helix-claude-mcp/
 ├── Cargo.toml
 ├── src/
 │   ├── main.rs        # CLI: subcommand dispatch
-│   ├── serve.rs       # MCP stdio server
+│   ├── serve.rs       # MCP stdio server (rmcp ServerHandler)
 │   ├── hook.rs        # UserPromptSubmit hook
 │   ├── discovery.rs   # Find Helix instance for current workspace
 │   ├── rpc_client.rs  # JSON-RPC client over Unix socket
-│   └── mcp_impl.rs    # MCP Resources & Tools handlers
+│   ├── resources.rs   # MCP Resources (snapshot file reader)
+│   └── tools.rs       # MCP Tools enum + arg schemas
 ```
 
 Dependencies:
@@ -357,15 +373,17 @@ Per convention (Resources = static state, Tools = LLM-initiated actions/queries)
 - `helix://state/snapshot` — same as the .helix/context.json content
 
 **Tools** (Claude calls via `tools/call`):
-- `helix_open_file(path, line?, column?)`
-- `helix_goto_line(line, column?)`
-- `helix_get_hover(line, column, path?, allow_insert?)`
-- `helix_get_definition(line, column, path?)`
-- `helix_get_references(line, column, path?)`
+- `helix_open_file(path)`
+- `helix_goto_line(line, column?, path?)`
+- `helix_get_hover(line, column, path?, allow_insert_mode?)`
+- `helix_get_definition(line, column, path?, allow_insert_mode?)`
+- `helix_get_references(line, column, path?, allow_insert_mode?, include_declaration?)`
 - `helix_get_diagnostics(path?)`
 - `helix_get_workspace_symbols(query)`
 - `helix_format_document(path?)`
 - `helix_run_command(name, args)`
+
+`helix_open_file` takes only `path`; clients that want to land on a specific position call `helix_goto_line` (with a `path`) after opening. An earlier draft of this spec listed `line?, column?` on `helix_open_file`, but the separate goto-line tool covers the case with no ambiguity about which arg owns the position.
 
 Names use underscores rather than dots. MCP's specification allows `.` in tool names, but Claude Code's validator is stricter — `^[a-zA-Z0-9_-]+$` is the safe alphabet. Avoid dots to dodge any client-side rejection.
 
@@ -389,8 +407,8 @@ So if Helix isn't running at all, Claude still gets passive context via Resource
 
 ### 7.5 Connection lifecycle
 
-- **Lazy Helix connection:** the MCP server opens the Unix socket on the first MCP tool call, not at server startup. Avoids holding a socket if Claude only reads Resources from the snapshot file.
-- **Reconnect on Helix restart:** on socket I/O error during a tool call, the MCP server retries discovery (re-globs `.helix/control-*.sock`) and reconnects on the next call. Single retry per call; failure surfaces as MCP error to Claude.
+- **Per-call connection:** the MCP server opens a fresh Unix socket per tool call (each connection is single-flight). Earlier drafts mentioned "open on first call and reuse"; the actual implementation is simpler — connect, send, receive, close. A future connection-pool refactor is possible if profiling shows the connect cost matters.
+- **Reconnect on Helix restart:** on socket I/O error, the next tool call re-globs `.helix/control-*.sock` from scratch. There is no in-call retry; a failed call surfaces as an MCP error to Claude and the next call will attempt fresh discovery.
 - **MCP server never panics on socket errors** — returns structured MCP errors instead.
 - **Stdio MCP server crash semantics:** if the MCP server *itself* crashes mid-session, Claude Code **does not** automatically respawn it. Stdio servers stay dead until the Claude Code session restarts (verified against current docs). This is an upstream Claude Code limitation, not something we can fix. Implementation implication: avoid panics aggressively; treat the MCP server as needing to be defensively-correct against malformed input from either side.
 
@@ -410,12 +428,14 @@ env (best-effort): CLAUDE_PROJECT_DIR
    - If missing after all paths, exit 0 silently
 4. Read snapshot. Check `last_update_source`:
    - If `"mcp_command"`: exit 0 (Claude already knows from the tool response that produced this state)
-5. Compute snapshot mtime
+5. Compute snapshot mtime. If `now - mtime > 24h`: exit 0 (stale — a day-old snapshot is rarely useful and quietly dropping it avoids confusing Claude with context from a long-closed session).
 6. Read marker file `$XDG_RUNTIME_DIR/claude-helix/marker-${session_id}`:
    - If marker mtime == snapshot mtime: exit 0 (already injected this version)
 7. Print snapshot wrapped in `<helix-editor-context>` tags
 8. Write current snapshot mtime to marker file
 9. Exit 0
+
+The `session_id` is sanitized before being used as a filename: any character outside `[A-Za-z0-9_-]` is replaced with `_`. Today's session ids are UUIDs (already safe), but the sanitization defends against unexpected formats and prevents path traversal via a malformed session id.
 ```
 
 Marker storage:
@@ -503,7 +523,7 @@ Schema changes happen here once and surface as compile errors on both sides.
 | Two clients connect to the control socket simultaneously | Both accept; both serve | Each connection is an independent `mpsc` producer to the editor event channel. Requests interleave but Editor mutations are serialized through the event loop. No data race; some commands may run out-of-submit-order. |
 | Snapshot file is read mid-rewrite | jq parse error in shell hook | The atomic `tmp + rename` pattern means readers either see fully-old or fully-new content. On rare NFS edge cases, hook retries one parse before giving up. |
 | Disk full when writing snapshot | `ENOSPC` in `write_context_file` | Log at warn level, return without surfacing to user. Next focus-loss retry. |
-| EditorEvent channel full | (Currently unbounded `mpsc`; if bounded in future) | Drop the request with `-32603` to avoid blocking the socket task. |
+| Editor event channel full | Bounded `mpsc::channel(64)` between socket task and editor | `send().await` applies backpressure to the socket task; if the channel stays full, accepting new connections still works but per-connection request submission blocks. In practice the editor drains 64 requests in milliseconds, so this is theoretical. |
 
 The MCP server's defensive principle: **prefer returning a structured MCP error to crashing.** Claude Code's lack of stdio respawn means every panic is a session-ending event.
 
@@ -575,11 +595,17 @@ The MCP server's defensive principle: **prefer returning a structured MCP error 
 
 ### Phase 6 — Polish (small)
 
-- `format-document`, `run-command` socket methods
-- Notifications/resources/list_changed if Claude exhibits staleness
-- Telemetry / debug logs (use `log::info!`/`log::debug!` with target `helix_term::context_logger` and `helix_term::control_socket`; existing `helix-term` logger config picks these up)
-- **`:write-context` typable command:** user-facing command that calls `write_context_file(editor, UpdateSource::Manual)`. Lets the user force a snapshot refresh (e.g., before switching panes if focus-loss didn't fire, or for debugging). This is what `UpdateSource::Manual` exists for; the variant otherwise has no producer.
-- `helix-claude-mcp doctor` subcommand for self-diagnosis (per Open Question 2)
+Shipped:
+- `format-document`, `run-command` socket methods (and matching `helix_format_document` / `helix_run_command` MCP tools).
+- Telemetry / debug logs (use `log::info!`/`log::debug!` with target `helix_term::context_logger` and `helix_term::control_socket`; existing `helix-term` logger config picks these up).
+- **`:write-context` typable command:** user-facing command that calls `write_context_file(editor, UpdateSource::Manual)`. Lets the user force a snapshot refresh (e.g., before switching panes if focus-loss didn't fire, or for debugging). This is what `UpdateSource::Manual` exists for; the variant otherwise has no producer. The command reports a different status when `context-logger` is disabled or Helix was launched outside a workspace marker (so users don't get a misleading "written" message when nothing was actually written).
+
+Deferred (not shipped, not currently required):
+- `notifications/resources/list_changed` if Claude exhibits staleness.
+- `helix-claude-mcp doctor` subcommand for self-diagnosis (per Open Question 2).
+- A `--verbose` flag on the hook with telemetry breadcrumbs.
+
+The deferred items can land as a Phase 6b polish round once the rest of the bridge has bedded in.
 
 Each phase is independently shippable. Phase 1 alone is valuable (bug fix + schema crate); phases 2-3 give Approach 2 minus the MCP bridge; phase 4 completes the user-facing feature.
 
