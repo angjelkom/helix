@@ -17,14 +17,20 @@ use helix_view::current_ref;
 use helix_view::editor::ContextLoggerConfig;
 use helix_view::Editor;
 
+/// Returns `Ok(true)` when the snapshot file was actually written,
+/// `Ok(false)` when the operation was deliberately skipped (logger
+/// disabled or launched outside a workspace marker — both are
+/// success cases). Callers that care about whether the file changed
+/// (e.g., `:write-context`) should inspect the bool; callers that
+/// don't can `let _ = …` or pattern-match Ok.
 pub fn write_context_file(
     editor: &Editor,
     source: UpdateSource,
     instance: Option<helix_context_schema::Instance>,
-) -> std::io::Result<()> {
+) -> std::io::Result<bool> {
     let cfg = editor.config().context_logger.clone();
     if !cfg.enabled {
-        return Ok(());
+        return Ok(false);
     }
 
     let (workspace, is_cwd_fallback) = helix_loader::find_workspace();
@@ -34,7 +40,7 @@ pub fn write_context_file(
              (would otherwise pollute {}/.helix/)",
             workspace.display()
         );
-        return Ok(());
+        return Ok(false);
     }
 
     let target: PathBuf = if cfg.path.is_absolute() {
@@ -73,7 +79,7 @@ pub fn write_context_file(
         f.sync_all()?;
     }
     std::fs::rename(&tmp, &target)?;
-    Ok(())
+    Ok(true)
 }
 
 pub(crate) fn build_snapshot(
