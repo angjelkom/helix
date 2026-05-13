@@ -59,7 +59,11 @@ pub fn marker_dir() -> PathBuf {
 }
 
 pub fn marker_path(session_id: &str) -> PathBuf {
-    marker_dir().join(format!("marker-{}", session_id))
+    let sanitized: String = session_id
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .collect();
+    marker_dir().join(format!("marker-{}", sanitized))
 }
 
 pub fn read_marker_mtime(path: &Path) -> Option<u64> {
@@ -290,6 +294,20 @@ mod tests {
         let p = marker_path("abc-123");
         assert!(p.to_string_lossy().ends_with("marker-abc-123"));
         match saved {
+            Some(v) => std::env::set_var("XDG_RUNTIME_DIR", v),
+            None => std::env::remove_var("XDG_RUNTIME_DIR"),
+        }
+    }
+
+    #[test]
+    fn marker_path_sanitizes_dangerous_session_id() {
+        let saved_xdg = std::env::var_os("XDG_RUNTIME_DIR");
+        std::env::set_var("XDG_RUNTIME_DIR", "/tmp/x");
+        let p = marker_path("../etc/passwd");
+        // Sanitization replaces / and . with _
+        assert!(!p.to_string_lossy().contains(".."), "still contains ..: {}", p.display());
+        assert!(!p.to_string_lossy().contains("/etc/"), "still contains /etc/: {}", p.display());
+        match saved_xdg {
             Some(v) => std::env::set_var("XDG_RUNTIME_DIR", v),
             None => std::env::remove_var("XDG_RUNTIME_DIR"),
         }
