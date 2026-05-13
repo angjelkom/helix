@@ -12,7 +12,7 @@ A small Rust binary that bridges two pieces:
 Claude Code's `.mcp.json` configures this binary as a stdio MCP server. Once it's running, Claude can:
 
 - Read editor state via MCP **Resources** (`helix://state/current`, `helix://state/buffers`, `helix://state/snapshot`).
-- Drive the editor via MCP **Tools** (open files, jump to lines, query LSP). *(Phase 4b — not yet implemented.)*
+- Drive the editor via MCP **Tools** (open files, jump to lines, query LSP).
 
 ## Installation
 
@@ -54,10 +54,26 @@ enabled = true
 enabled = true
 ```
 
+## Available Tools
+
+Phase 4b shipped these tools. Claude Code can call any of them via MCP `tools/call`:
+
+| Tool | What it does |
+|---|---|
+| `helix_open_file` | Open a file in Helix and focus it. |
+| `helix_goto_line` | Move the cursor to a line/column. |
+| `helix_get_diagnostics` | List LSP diagnostics for a file. |
+| `helix_get_hover` | LSP hover info at a position. |
+| `helix_get_definition` | LSP goto-definition. |
+| `helix_get_references` | LSP find-references. |
+| `helix_get_workspace_symbols` | LSP workspace symbol search. |
+
+All tools require Helix to be running with `[editor.control-socket] enabled = true`. When Helix isn't running, tools return a clear "not running" error message.
+
 ## How it works
 
 - **Resources** read from the snapshot file `<workspace>/.helix/context.json` — fast, no Helix process required (returns a friendly error if the snapshot is missing).
-- **Tools** (Phase 4b) connect to the live Helix control socket via discovery — globbing `<workspace>/.helix/control-*.sock` and picking the live one.
+- **Tools** connect to the live Helix control socket via discovery — globbing `<workspace>/.helix/control-*.sock` and picking the live one.
 
 ## Subcommands
 
