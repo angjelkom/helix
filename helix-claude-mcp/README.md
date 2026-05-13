@@ -132,7 +132,7 @@ When Claude Code compacts the context (auto or `/compact`), the previously-injec
 
 ### How it dedupes
 
-Marker file at `$XDG_RUNTIME_DIR/claude-helix/marker-${session_id}` (Linux) or `~/Library/Caches/claude-helix/marker-${session_id}` (macOS) holds the snapshot's mtime at last injection. On each call:
+Marker file at `$XDG_RUNTIME_DIR/claude-helix/marker-${session_id}` if `XDG_RUNTIME_DIR` is set; otherwise `~/Library/Caches/claude-helix/marker-${session_id}` on macOS or `~/.cache/claude-helix/marker-${session_id}` elsewhere. Holds the snapshot's mtime at last injection. The `session_id` is sanitized — any character outside `[A-Za-z0-9_-]` becomes `_` — to prevent path traversal via an unexpected session-id format. On each call:
 
 1. Parse stdin (must contain `session_id` and `cwd`; serde drops unknown fields).
 2. Locate the snapshot at `$CLAUDE_PROJECT_DIR/.helix/context.json` (or walk up from `cwd`).
@@ -140,7 +140,7 @@ Marker file at `$XDG_RUNTIME_DIR/claude-helix/marker-${session_id}` (Linux) or `
 4. Skip if marker mtime matches snapshot mtime (already injected this session).
 5. Otherwise: emit wrapped snapshot, then write snapshot mtime into the marker file.
 
-Failure modes (stdin parse error, marker write failure, etc.) exit 0 silently — the hook is best-effort and never fails the user's prompt.
+Failure modes (stdin parse error, snapshot emit failure, marker write failure, etc.) exit 0 silently — the hook is best-effort and never fails the user's prompt. Errors are logged at warn level on stderr.
 
 ## Migrating from the shell hook
 
