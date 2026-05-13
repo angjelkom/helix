@@ -15,6 +15,8 @@ pub enum ToolKind {
     HelixGetDefinition,
     HelixGetReferences,
     HelixGetWorkspaceSymbols,
+    HelixFormatDocument,
+    HelixRunCommand,
 }
 
 impl ToolKind {
@@ -27,6 +29,8 @@ impl ToolKind {
             Self::HelixGetDefinition => "helix_get_definition",
             Self::HelixGetReferences => "helix_get_references",
             Self::HelixGetWorkspaceSymbols => "helix_get_workspace_symbols",
+            Self::HelixFormatDocument => "helix_format_document",
+            Self::HelixRunCommand => "helix_run_command",
         }
     }
 
@@ -64,6 +68,21 @@ impl ToolKind {
             Self::HelixGetWorkspaceSymbols => {
                 "Fuzzy-search workspace symbols by query string. Returns symbols with \
                  kind, name, location."
+            }
+            Self::HelixFormatDocument => {
+                "Format a buffer using the LSP formatter (rust-analyzer, gopls, etc.). \
+                 The buffer must already be open; pass path: 'foo.rs' to format a specific \
+                 buffer, or omit path to format the active one. Returns applied: true when \
+                 the format was kicked off. The actual edits arrive asynchronously via the \
+                 LSP response."
+            }
+            Self::HelixRunCommand => {
+                "Execute an arbitrary Helix typable command. POWERFUL — can do anything a \
+                 user can type at the `:` prompt: write files, reload config, run shell \
+                 commands via `:run-shell-command`, etc. Pass name as the command without \
+                 the leading `:`. Use args for additional arguments (joined with spaces). \
+                 Examples: { name: 'write' } to save; { name: 'reload' } to reload from \
+                 disk; { name: 'open', args: ['src/main.rs'] } to open a file."
             }
         }
     }
@@ -120,6 +139,20 @@ impl ToolKind {
                 },
                 "required": ["query"]
             }),
+            Self::HelixFormatDocument => json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Buffer path (optional; defaults to active)" }
+                }
+            }),
+            Self::HelixRunCommand => json!({
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "Typable command name without leading ':'" },
+                    "args": { "type": "array", "items": { "type": "string" }, "description": "Optional command arguments" }
+                },
+                "required": ["name"]
+            }),
         }
     }
 
@@ -132,6 +165,8 @@ impl ToolKind {
             "helix_get_definition" => Some(Self::HelixGetDefinition),
             "helix_get_references" => Some(Self::HelixGetReferences),
             "helix_get_workspace_symbols" => Some(Self::HelixGetWorkspaceSymbols),
+            "helix_format_document" => Some(Self::HelixFormatDocument),
+            "helix_run_command" => Some(Self::HelixRunCommand),
             _ => None,
         }
     }
@@ -145,6 +180,8 @@ impl ToolKind {
             Self::HelixGetDefinition,
             Self::HelixGetReferences,
             Self::HelixGetWorkspaceSymbols,
+            Self::HelixFormatDocument,
+            Self::HelixRunCommand,
         ]
         .into_iter()
     }
@@ -197,14 +234,27 @@ pub struct HelixGetWorkspaceSymbolsArgs {
     pub query: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct HelixFormatDocumentArgs {
+    #[serde(default)]
+    pub path: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct HelixRunCommandArgs {
+    pub name: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn all_iterates_seven_kinds() {
+    fn all_iterates_nine_kinds() {
         let kinds: Vec<_> = ToolKind::all().collect();
-        assert_eq!(kinds.len(), 7);
+        assert_eq!(kinds.len(), 9);
     }
 
     #[test]
