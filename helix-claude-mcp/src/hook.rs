@@ -446,6 +446,26 @@ mod decide_tests {
     }
 
     #[test]
+    fn decide_emits_when_source_is_manual() {
+        let saved = isolate_env();
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::env::set_var("XDG_RUNTIME_DIR", tmp.path());
+
+        let helix = tmp.path().join(".helix");
+        std::fs::create_dir(&helix).unwrap();
+        std::fs::write(
+            helix.join("context.json"),
+            minimal_snapshot_json(UpdateSource::Manual),
+        )
+        .unwrap();
+
+        let input = input_at(tmp.path(), "s-manual");
+        let result = decide(&input);
+        restore_env(saved);
+        assert!(matches!(result, HookDecision::Emit { .. }), "got: {:?}", result);
+    }
+
+    #[test]
     fn decide_skips_when_marker_matches_mtime() {
         let saved = isolate_env();
         let tmp = tempfile::TempDir::new().unwrap();
