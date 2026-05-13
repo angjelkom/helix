@@ -386,3 +386,152 @@ async fn tools_call_returns_error_when_helix_not_running() {
     drop(stdin);
     let _ = child.kill().await;
 }
+
+#[tokio::test]
+async fn tools_call_format_document_against_fake_helix() {
+    let tmp = TempDir::new().unwrap();
+    let helix = tmp.path().join(".helix");
+    std::fs::create_dir(&helix).unwrap();
+    std::fs::write(helix.join("context.json"), SAMPLE_SNAPSHOT).unwrap();
+
+    let canned = r#"{"method":"format-document","result":{"applied":true}}"#.to_string() + "\n";
+    let _sock = spawn_fake_helix_in(tmp.path(), canned).await;
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let mut child = Command::new(binary_path())
+        .arg("serve")
+        .env("CLAUDE_PROJECT_DIR", tmp.path())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let stdout = child.stdout.take().unwrap();
+    let mut reader = BufReader::new(stdout);
+
+    for msg in [
+        r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"t","version":"0.1"}}}"#,
+        r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
+        r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"helix_format_document","arguments":{}}}"#,
+    ] {
+        stdin.write_all(msg.as_bytes()).await.unwrap();
+        stdin.write_all(b"\n").await.unwrap();
+    }
+    stdin.flush().await.unwrap();
+
+    let mut found = false;
+    for _ in 0..6 {
+        let mut line = String::new();
+        if let Ok(n) = reader.read_line(&mut line).await {
+            if n == 0 { break; }
+            if line.contains("\"id\":2") {
+                assert!(!line.contains("\"isError\":true"), "got error: {}", line);
+                assert!(line.contains("applied"), "missing applied field: {}", line);
+                found = true;
+                break;
+            }
+        }
+    }
+    assert!(found, "no response");
+    drop(stdin);
+    let _ = child.kill().await;
+}
+
+#[tokio::test]
+async fn tools_call_run_command_against_fake_helix() {
+    let tmp = TempDir::new().unwrap();
+    let helix = tmp.path().join(".helix");
+    std::fs::create_dir(&helix).unwrap();
+    std::fs::write(helix.join("context.json"), SAMPLE_SNAPSHOT).unwrap();
+
+    let canned = r#"{"method":"run-command","result":{"message":"context snapshot written"}}"#.to_string() + "\n";
+    let _sock = spawn_fake_helix_in(tmp.path(), canned).await;
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let mut child = Command::new(binary_path())
+        .arg("serve")
+        .env("CLAUDE_PROJECT_DIR", tmp.path())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let stdout = child.stdout.take().unwrap();
+    let mut reader = BufReader::new(stdout);
+
+    for msg in [
+        r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"t","version":"0.1"}}}"#,
+        r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
+        r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"helix_run_command","arguments":{"name":"write-context"}}}"#,
+    ] {
+        stdin.write_all(msg.as_bytes()).await.unwrap();
+        stdin.write_all(b"\n").await.unwrap();
+    }
+    stdin.flush().await.unwrap();
+
+    let mut found = false;
+    for _ in 0..6 {
+        let mut line = String::new();
+        if let Ok(n) = reader.read_line(&mut line).await {
+            if n == 0 { break; }
+            if line.contains("\"id\":2") {
+                assert!(!line.contains("\"isError\":true"), "got error: {}", line);
+                assert!(line.contains("context snapshot written"), "missing message: {}", line);
+                found = true;
+                break;
+            }
+        }
+    }
+    assert!(found, "no response");
+    drop(stdin);
+    let _ = child.kill().await;
+}
+
+#[tokio::test]
+async fn tools_list_includes_phase_6_tools() {
+    let tmp = TempDir::new().unwrap();
+    let helix = tmp.path().join(".helix");
+    std::fs::create_dir(&helix).unwrap();
+    std::fs::write(helix.join("context.json"), SAMPLE_SNAPSHOT).unwrap();
+
+    let mut child = Command::new(binary_path())
+        .arg("serve")
+        .env("CLAUDE_PROJECT_DIR", tmp.path())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let stdout = child.stdout.take().unwrap();
+    let mut reader = BufReader::new(stdout);
+
+    for msg in [
+        r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"t","version":"0.1"}}}"#,
+        r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
+        r#"{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}"#,
+    ] {
+        stdin.write_all(msg.as_bytes()).await.unwrap();
+        stdin.write_all(b"\n").await.unwrap();
+    }
+    stdin.flush().await.unwrap();
+
+    let mut found = false;
+    for _ in 0..6 {
+        let mut line = String::new();
+        if let Ok(n) = reader.read_line(&mut line).await {
+            if n == 0 { break; }
+            if line.contains("\"id\":2") {
+                assert!(line.contains("helix_format_document"), "missing format-document tool: {}", line);
+                assert!(line.contains("helix_run_command"), "missing run-command tool: {}", line);
+                found = true;
+                break;
+            }
+        }
+    }
+    assert!(found, "no tools/list response");
+    drop(stdin);
+    let _ = child.kill().await;
+}
