@@ -2412,6 +2412,20 @@ impl Application {
                 );
                 return;
             }
+            ControlRequest::FormatDocument { .. } => {
+                Err(JsonRpcError {
+                    code: JsonRpcErrorCode::MethodNotFound,
+                    message: "format-document handler not yet implemented".into(),
+                    data: None,
+                })
+            }
+            ControlRequest::RunCommand { .. } => {
+                Err(JsonRpcError {
+                    code: JsonRpcErrorCode::MethodNotFound,
+                    message: "run-command handler not yet implemented".into(),
+                    data: None,
+                })
+            }
         };
 
         let _ = reply.send(resp);
