@@ -54,10 +54,27 @@ pub async fn find_helix_socket(
             path.clone()
         } else if name.starts_with("control-") && name.ends_with(".sock.path") {
             // Read the pointer file to find the real socket location.
-            match tokio::fs::read_to_string(&path).await {
-                Ok(contents) => PathBuf::from(contents.trim()),
+            //
+            // Defense-in-depth: a checked-in malicious `.sock.path` could
+            // redirect us to any attacker-bound socket (e.g., `/tmp/evil.sock`)
+            // and poison MCP tool results. Cap the read size and require the
+            // target path to live under one of the runtime prefixes Helix
+            // would actually write to.
+            const MAX_POINTER_BYTES: usize = 4096;
+            let raw = match read_bounded(&path, MAX_POINTER_BYTES).await {
+                Ok(s) => s,
                 Err(_) => continue,
+            };
+            let target = PathBuf::from(raw.trim());
+            if !is_allowed_pointer_target(&target) {
+                log::warn!(
+                    "discovery: refusing pointer {} → {} (target outside allowed runtime prefixes)",
+                    path.display(),
+                    target.display()
+                );
+                continue;
             }
+            target
         } else {
             continue;
         };
@@ -78,6 +95,66 @@ pub async fn find_helix_socket(
         .next()
         .map(|(p, _)| p)
         .ok_or(DiscoveryError::NoLiveSocket(workspace))
+}
+
+/// Read up to `max` bytes from `path`. Refuses files larger than `max`
+/// without buffering them. Used for pointer files where the legitimate
+/// content is short (a single path); a multi-GB pointer file is a sign
+/// of attack or filesystem corruption.
+async fn read_bounded(path: &Path, max: usize) -> std::io::Result<String> {
+    use tokio::io::AsyncReadExt;
+    let mut f = tokio::fs::File::open(path).await?;
+    let mut buf = String::new();
+    let mut handle = (&mut f).take(max as u64 + 1);
+    handle.read_to_string(&mut buf).await?;
+    if buf.len() > max {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "pointer file exceeds max size",
+        ));
+    }
+    Ok(buf)
+}
+
+/// True if `target` is under one of the runtime prefixes Helix would
+/// legitimately write a runtime socket to (XDG_RUNTIME_DIR/helix/,
+/// TMPDIR/helix/ on macOS, or the cache dir on other unixes). Used to
+/// reject checked-in malicious `.sock.path` pointers that redirect to
+/// attacker-controlled paths.
+fn is_allowed_pointer_target(target: &Path) -> bool {
+    fn under(prefix: Option<PathBuf>, target: &Path) -> bool {
+        prefix
+            .and_then(|p| target.strip_prefix(p.join("helix")).ok().map(|_| ()))
+            .is_some()
+    }
+
+    let xdg = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from);
+    if under(xdg, target) {
+        return true;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let tmp = std::env::var_os("TMPDIR")
+            .map(PathBuf::from)
+            .or_else(|| Some(PathBuf::from("/tmp")));
+        if under(tmp, target) {
+            return true;
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        // Linux fallback: Helix's runtime_socket_path uses dirs::cache_dir(),
+        // which resolves to $XDG_CACHE_HOME, falling back to $HOME/.cache.
+        let cache = std::env::var_os("XDG_CACHE_HOME")
+            .map(PathBuf::from)
+            .or_else(|| {
+                std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache"))
+            });
+        if under(cache, target) {
+            return true;
+        }
+    }
+    false
 }
 
 /// Try to connect to the socket with a 200 ms timeout. ECONNREFUSED or
@@ -127,19 +204,70 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn follows_pointer_file() {
+    async fn follows_pointer_file_when_target_is_under_allowed_prefix() {
+        let _lock = crate::TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let saved = std::env::var_os("XDG_RUNTIME_DIR");
+
         let tmp = TempDir::new().unwrap();
-        let helix = tmp.path().join(".helix");
+        let workspace = tmp.path().join("ws");
+        std::fs::create_dir(&workspace).unwrap();
+        let helix = workspace.join(".helix");
         std::fs::create_dir(&helix).unwrap();
-        // Create the real socket somewhere outside the .helix dir.
-        let real_sock = tmp.path().join("real.sock");
+
+        // Set XDG_RUNTIME_DIR so the pointer target falls under the allowed
+        // prefix (XDG_RUNTIME_DIR/helix/). Helix's writer would create the
+        // socket under exactly this directory.
+        let runtime = tmp.path().join("runtime");
+        std::env::set_var("XDG_RUNTIME_DIR", &runtime);
+        let helix_runtime = runtime.join("helix");
+        std::fs::create_dir_all(&helix_runtime).unwrap();
+        let real_sock = helix_runtime.join("control-12345-abc.sock");
         let _listener = UnixListener::bind(&real_sock).unwrap();
-        // Pointer file at expected location.
+
         let pointer = helix.join("control-12345.sock.path");
         std::fs::write(&pointer, real_sock.to_str().unwrap()).unwrap();
 
-        let resolved = find_helix_socket(Some(tmp.path())).await.unwrap();
+        let resolved = find_helix_socket(Some(&workspace)).await.unwrap();
+
+        // Restore env.
+        match saved {
+            Some(v) => std::env::set_var("XDG_RUNTIME_DIR", v),
+            None => std::env::remove_var("XDG_RUNTIME_DIR"),
+        }
+
         assert_eq!(resolved, real_sock);
+    }
+
+    #[tokio::test]
+    async fn refuses_pointer_target_outside_allowed_prefixes() {
+        let _lock = crate::TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let saved = std::env::var_os("XDG_RUNTIME_DIR");
+
+        let tmp = TempDir::new().unwrap();
+        let workspace = tmp.path().join("ws");
+        std::fs::create_dir(&workspace).unwrap();
+        let helix = workspace.join(".helix");
+        std::fs::create_dir(&helix).unwrap();
+
+        // Set XDG_RUNTIME_DIR somewhere; the pointer will redirect outside it.
+        std::env::set_var("XDG_RUNTIME_DIR", tmp.path().join("legitimate"));
+
+        // Bind an attacker-controlled socket somewhere the pointer redirects to.
+        let attacker_sock = tmp.path().join("evil.sock");
+        let _listener = UnixListener::bind(&attacker_sock).unwrap();
+
+        // Pointer file points at the attacker socket.
+        let pointer = helix.join("control-12345.sock.path");
+        std::fs::write(&pointer, attacker_sock.to_str().unwrap()).unwrap();
+
+        let err = find_helix_socket(Some(&workspace)).await.unwrap_err();
+
+        match saved {
+            Some(v) => std::env::set_var("XDG_RUNTIME_DIR", v),
+            None => std::env::remove_var("XDG_RUNTIME_DIR"),
+        }
+
+        assert!(matches!(err, DiscoveryError::NoLiveSocket(_)));
     }
 
     #[tokio::test]
