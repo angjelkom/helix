@@ -289,8 +289,8 @@ JSON-RPC 2.0 over a single-newline-delimited stream per connection. Each connect
 |---|---|---|
 | `open-file` | `{path, line?, column?}` | `{ok: true}` |
 | `goto-line` | `{line, column?, path?}` | `{ok: true}` |
-| `run-typable-command` | `{name, args: []}` | `{ok: bool, output?: string}` |
-| `format-document` | `{path?}` | `{ok: bool}` |
+| `run-command` | `{name, args: []}` | `{ok: bool, output?: string}` |
+| `format-document` | `{path?}` | `{applied: bool}` |
 
 ### 6.4 Error handling
 
@@ -575,7 +575,7 @@ The MCP server's defensive principle: **prefer returning a structured MCP error 
 
 ### Phase 6 — Polish (small)
 
-- `format-document`, `run-typable-command` socket methods
+- `format-document`, `run-command` socket methods
 - Notifications/resources/list_changed if Claude exhibits staleness
 - Telemetry / debug logs (use `log::info!`/`log::debug!` with target `helix_term::context_logger` and `helix_term::control_socket`; existing `helix-term` logger config picks these up)
 - **`:write-context` typable command:** user-facing command that calls `write_context_file(editor, UpdateSource::Manual)`. Lets the user force a snapshot refresh (e.g., before switching panes if focus-loss didn't fire, or for debugging). This is what `UpdateSource::Manual` exists for; the variant otherwise has no producer.
