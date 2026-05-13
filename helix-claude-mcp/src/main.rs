@@ -8,6 +8,7 @@
 use clap::{Parser, Subcommand};
 
 mod discovery;
+mod resources;
 mod rpc_client;
 mod serve;
 
