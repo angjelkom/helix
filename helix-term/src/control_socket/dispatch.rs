@@ -29,7 +29,9 @@ pub fn try_dispatch_inline(
         | ControlRequest::GetHoverAt { .. }
         | ControlRequest::GetDefinitionAt { .. }
         | ControlRequest::GetReferencesAt { .. }
-        | ControlRequest::GetWorkspaceSymbols { .. } => None,
+        | ControlRequest::GetWorkspaceSymbols { .. }
+        | ControlRequest::FormatDocument { .. }
+        | ControlRequest::RunCommand { .. } => None,
     }
 }
 
