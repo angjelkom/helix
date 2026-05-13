@@ -19,7 +19,7 @@ path = "src/main.rs"
 helix-context-schema = { path = "../helix-context-schema" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "io-util", "time", "fs"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "io-util", "time", "fs", "process"] }
 anyhow = "1.0"
 clap = { version = "4", features = ["derive"] }
 log = "0.4"
