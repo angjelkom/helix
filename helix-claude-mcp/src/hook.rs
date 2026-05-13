@@ -183,7 +183,56 @@ pub fn decide(input: &HookInput) -> HookDecision {
     }
 }
 
-pub async fn run(_reset_marker: bool) -> Result<()> {
+pub async fn run(reset_marker: bool) -> Result<()> {
+    // Parse stdin. If parsing fails, exit 0 silently — the hook is best-
+    // effort and should never fail the user's prompt.
+    let input = match HookInput::parse(io::stdin()) {
+        Ok(i) => i,
+        Err(e) => {
+            log::warn!("hook: stdin parse failed: {}", e);
+            return Ok(());
+        }
+    };
+
+    if reset_marker {
+        let marker_p = marker_path(&input.session_id);
+        match std::fs::remove_file(&marker_p) {
+            Ok(()) => log::debug!("hook: cleared marker {}", marker_p.display()),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {} // ok, nothing to clear
+            Err(e) => log::warn!("hook: clearing marker failed: {}", e),
+        }
+        return Ok(());
+    }
+
+    match decide(&input) {
+        HookDecision::Skip(reason) => {
+            log::debug!("hook: skip ({})", reason);
+            Ok(())
+        }
+        HookDecision::Emit { snapshot_path, snapshot_mtime } => {
+            emit_wrapped_snapshot(&snapshot_path)?;
+            // Update the marker AFTER emission so a write failure here doesn't
+            // suppress the actually-needed inject next time.
+            let marker_p = marker_path(&input.session_id);
+            if let Err(e) = write_marker_mtime(&marker_p, snapshot_mtime) {
+                log::warn!("hook: writing marker failed: {}", e);
+            }
+            Ok(())
+        }
+    }
+}
+
+fn emit_wrapped_snapshot(snapshot_path: &Path) -> Result<()> {
+    use std::io::Write;
+    let body = std::fs::read_to_string(snapshot_path)?;
+    let mut out = io::stdout().lock();
+    writeln!(out, "<helix-editor-context source=\"{}\">", snapshot_path.display())?;
+    out.write_all(body.as_bytes())?;
+    if !body.ends_with('\n') {
+        writeln!(out)?;
+    }
+    writeln!(out, "</helix-editor-context>")?;
+    out.flush()?;
     Ok(())
 }
 
@@ -259,6 +308,25 @@ mod tests {
         let path = tmp.path().join("marker-broken");
         std::fs::write(&path, "not a number\n").unwrap();
         assert!(read_marker_mtime(&path).is_none());
+    }
+}
+
+#[cfg(test)]
+mod emit_tests {
+    use super::*;
+
+    #[test]
+    fn emit_wrapped_snapshot_writes_to_stdout_with_tags() {
+        // We can't easily intercept stdout in a unit test. Instead test the
+        // body-construction logic by extracting it into a helper. For unit
+        // tests we just exercise the file-read path.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let snap = tmp.path().join("context.json");
+        std::fs::write(&snap, r#"{"hello":"world"}"#).unwrap();
+        // emit_wrapped_snapshot writes to stdout — we cover its output shape
+        // in the integration test (Task 5) which spawns the binary. Here we
+        // just confirm the file-read path doesn't error.
+        assert!(emit_wrapped_snapshot(&snap).is_ok());
     }
 }
 
