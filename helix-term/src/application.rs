@@ -2027,6 +2027,87 @@ impl Application {
                 let _ = reply.send(Ok(ControlResponse::Ok {}));
                 return;
             }
+            ControlRequest::SelectRange {
+                start_line,
+                start_column,
+                end_line,
+                end_column,
+                path,
+            } => {
+                let (workspace, _) = helix_loader::find_workspace();
+                let doc_id = match resolve_buffer(&self.editor, &workspace, path.as_deref()) {
+                    Ok(d) => d.id(),
+                    Err(e) => {
+                        let _ = reply.send(Err(e));
+                        return;
+                    }
+                };
+                let view_id = self.editor.tree.focus;
+                // Switch to the target buffer if it isn't the focused one.
+                if self.editor.tree.try_get(view_id).is_some()
+                    && self.editor.documents.get(&doc_id).is_some()
+                {
+                    self.editor.switch(doc_id, helix_view::editor::Action::Replace);
+                }
+                let view_id = self.editor.tree.focus;
+                let doc = match self.editor.documents.get_mut(&doc_id) {
+                    Some(d) => d,
+                    None => {
+                        let _ = reply.send(Err(JsonRpcError {
+                            code: JsonRpcErrorCode::NoActiveDocument,
+                            message: "document gone after switch".into(),
+                            data: None,
+                        }));
+                        return;
+                    }
+                };
+                let text = doc.text();
+
+                // Helper: clamp a 1-indexed (line, col) to a valid char index
+                // in `text`. Returns the char index. Columns past line end
+                // clamp to line-end-before-newline; lines past EOF clamp to
+                // EOF.
+                let pos_to_char = |line: usize, column: usize| -> usize {
+                    let last_line = text.len_lines().saturating_sub(1);
+                    let target_line = line.saturating_sub(1).min(last_line);
+                    let line_start = text.line_to_char(target_line);
+                    let line_end = if target_line + 1 < text.len_lines() {
+                        text.line_to_char(target_line + 1).saturating_sub(1)
+                    } else {
+                        text.len_chars()
+                    };
+                    let target_col = column.saturating_sub(1);
+                    (line_start + target_col).min(line_end)
+                };
+
+                let anchor = pos_to_char(start_line, start_column);
+                let head = pos_to_char(end_line, end_column);
+                let selection = helix_core::Selection::single(anchor, head);
+                doc.set_selection(view_id, selection);
+
+                // Recenter view on the head so the user sees the selection.
+                // `ensure_cursor_in_view_center` is the public scroll helper;
+                // it borrows the view immutably and mutates the document's
+                // view offset, so it works with the borrow checker here.
+                let scrolloff = self.editor.config().scrolloff;
+                if let Some(view) = self.editor.tree.try_get(view_id) {
+                    if let Some(doc) = self.editor.documents.get_mut(&doc_id) {
+                        view.ensure_cursor_in_view_center(doc, scrolloff);
+                    }
+                }
+
+                let instance = self.control_socket_binding.as_ref().map(|s| s.to_instance());
+                if let Err(e) = crate::context_logger::write_context_file(
+                    &self.editor,
+                    helix_context_schema::UpdateSource::McpCommand,
+                    instance,
+                ) {
+                    log::warn!("control-socket: snapshot rewrite failed after select-range: {}", e);
+                }
+
+                let _ = reply.send(Ok(ControlResponse::Ok {}));
+                return;
+            }
             ControlRequest::GetDiagnostics { path } => {
                 let (workspace, _) = helix_loader::find_workspace();
                 let doc = match resolve_buffer(&self.editor, &workspace, path.as_deref()) {

@@ -25,6 +25,7 @@ pub fn try_dispatch_inline(
         | ControlRequest::GetBufferText { .. }
         | ControlRequest::OpenFile { .. }
         | ControlRequest::GotoLine { .. }
+        | ControlRequest::SelectRange { .. }
         | ControlRequest::GetDiagnostics { .. }
         | ControlRequest::GetHoverAt { .. }
         | ControlRequest::GetDefinitionAt { .. }
@@ -71,6 +72,7 @@ fn handle_initialize(
             write_methods: vec![
                 "open-file".into(),
                 "goto-line".into(),
+                "select-range".into(),
                 "format-document".into(),
                 "run-command".into(),
             ],
@@ -147,7 +149,7 @@ mod tests {
             panic!("expected Initialize response");
         };
         let writes = &capabilities.write_methods;
-        for m in &["open-file", "goto-line", "format-document", "run-command"] {
+        for m in &["open-file", "goto-line", "select-range", "format-document", "run-command"] {
             assert!(writes.contains(&m.to_string()), "missing write method: {}", m);
         }
     }

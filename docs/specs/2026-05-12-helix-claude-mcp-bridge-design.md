@@ -302,6 +302,7 @@ Shared LSP types (defined in `helix-context-schema`):
 |---|---|---|
 | `open-file` | `{path}` | `Ok {}` |
 | `goto-line` | `{line, column?, path?}` | `Ok {}` |
+| `select-range` | `{start_line, start_column, end_line, end_column, path?}` | `Ok {}` (1-indexed inclusive; `start` is anchor, `end` is head; view recenters on head) |
 | `run-command` | `{name, args: []}` | `{message?: string}` (last status text from the editor) |
 | `format-document` | `{path?}` | `{applied: bool}` (true once the format was kicked off; the LSP edits arrive asynchronously) |
 
@@ -375,6 +376,7 @@ Per convention (Resources = static state, Tools = LLM-initiated actions/queries)
 **Tools** (Claude calls via `tools/call`):
 - `helix_open_file(path)`
 - `helix_goto_line(line, column?, path?)`
+- `helix_select(start_line, start_column, end_line, end_column, path?)`
 - `helix_get_hover(line, column, path?, allow_insert_mode?)`
 - `helix_get_definition(line, column, path?, allow_insert_mode?)`
 - `helix_get_references(line, column, path?, allow_insert_mode?, include_declaration?)`
