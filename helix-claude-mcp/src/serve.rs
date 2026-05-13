@@ -196,6 +196,21 @@ impl ServerHandler for HelixMcpServer {
                     Err(e) => return Ok(tool_error(format!("Invalid arguments for helix_get_workspace_symbols: {}", e))),
                 }
             }
+            ToolKind::HelixFormatDocument => {
+                match serde_json::from_value::<HelixFormatDocumentArgs>(args_val) {
+                    Ok(a) => ControlRequest::FormatDocument { path: a.path },
+                    Err(e) => return Ok(tool_error(format!("Invalid arguments for helix_format_document: {}", e))),
+                }
+            }
+            ToolKind::HelixRunCommand => {
+                match serde_json::from_value::<HelixRunCommandArgs>(args_val) {
+                    Ok(a) => ControlRequest::RunCommand {
+                        name: a.name,
+                        args: a.args,
+                    },
+                    Err(e) => return Ok(tool_error(format!("Invalid arguments for helix_run_command: {}", e))),
+                }
+            }
         };
 
         Ok(dispatch_tool(request).await)
