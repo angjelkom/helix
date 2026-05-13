@@ -8,6 +8,7 @@
 use clap::{Parser, Subcommand};
 
 mod discovery;
+mod hook;
 mod resources;
 mod rpc_client;
 mod serve;
@@ -25,8 +26,16 @@ struct Cli {
 enum Command {
     /// Run the stdio MCP server. Configured in Claude Code's .mcp.json.
     Serve,
-    /// Run the UserPromptSubmit hook (Phase 5; not yet implemented).
-    Hook,
+    /// Run as a Claude Code hook. Without arguments: UserPromptSubmit
+    /// handler — read stdin JSON, emit wrapped snapshot if appropriate.
+    /// With --reset-marker: clear the session's mtime marker so the
+    /// next UserPromptSubmit re-injects. Used by PostCompact and
+    /// SessionStart matcher=compact.
+    Hook {
+        /// Clear the per-session marker file (use after context compaction)
+        #[arg(long)]
+        reset_marker: bool,
+    },
 }
 
 #[tokio::main]
@@ -43,8 +52,8 @@ async fn main() -> anyhow::Result<()> {
             serve::run().await?;
             Ok(())
         }
-        Command::Hook => {
-            anyhow::bail!("hook is a Phase 5 deliverable");
+        Command::Hook { reset_marker } => {
+            hook::run(reset_marker).await
         }
     }
 }
