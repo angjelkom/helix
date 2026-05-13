@@ -71,6 +71,8 @@ fn handle_initialize(
             write_methods: vec![
                 "open-file".into(),
                 "goto-line".into(),
+                "format-document".into(),
+                "run-command".into(),
             ],
         },
     })
@@ -135,7 +137,7 @@ mod tests {
     }
 
     #[test]
-    fn initialize_advertises_phase_2c_write_methods() {
+    fn initialize_advertises_all_write_methods() {
         let req = ControlRequest::Initialize {
             protocol_version: "1.0".into(),
             client_info: ClientInfo { name: "t".into(), version: "0.1".into() },
@@ -145,8 +147,9 @@ mod tests {
             panic!("expected Initialize response");
         };
         let writes = &capabilities.write_methods;
-        assert!(writes.contains(&"open-file".to_string()), "missing open-file");
-        assert!(writes.contains(&"goto-line".to_string()), "missing goto-line");
+        for m in &["open-file", "goto-line", "format-document", "run-command"] {
+            assert!(writes.contains(&m.to_string()), "missing write method: {}", m);
+        }
     }
 
     #[test]
