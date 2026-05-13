@@ -44,8 +44,10 @@ impl ToolKind {
             }
             Self::HelixGotoLine => {
                 "Move the cursor in the running Helix editor to a 1-indexed line \
-                 (and optional column). When path is given, switches to that buffer first; \
-                 the buffer must already be open."
+                 (and optional column). The view scrolls only if the target line is \
+                 not already visible — same behavior as a user typing `:<line>`. \
+                 When path is given, switches to that buffer first; the buffer must \
+                 already be open."
             }
             Self::HelixSelect => {
                 "Select a range in the running Helix editor's buffer, from \
