@@ -301,8 +301,8 @@ Shared LSP types (defined in `helix-context-schema`):
 | Method | Params | Returns |
 |---|---|---|
 | `open-file` | `{path}` | `Ok {}` |
-| `goto-line` | `{line, column?, path?}` | `Ok {}` |
-| `select-range` | `{start_line, start_column, end_line, end_column, path?}` | `Ok {}` (1-indexed inclusive; `start` is anchor, `end` is head; view recenters on head) |
+| `goto-line` | `{line, column?, path?}` | `Ok {}` (view scrolls only if the target is outside the visible region; cursor stays inside `editor.scrolloff`) |
+| `select-range` | `{start_line, start_column, end_line, end_column, path?}` | `Ok {}` (1-indexed inclusive; `start` is anchor, `end` is head; view always recenters on head) |
 | `run-command` | `{name, args: []}` | `{message?: string}` (last status text from the editor) |
 | `format-document` | `{path?}` | `{applied: bool}` (true once the format was kicked off; the LSP edits arrive asynchronously) |
 
