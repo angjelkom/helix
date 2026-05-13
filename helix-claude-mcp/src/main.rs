@@ -9,6 +9,7 @@ use clap::{Parser, Subcommand};
 
 mod discovery;
 mod rpc_client;
+mod serve;
 
 #[derive(Parser)]
 #[command(name = "helix-claude-mcp", version)]
@@ -37,9 +38,8 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Command::Serve => {
-            log::info!("helix-claude-mcp serve starting");
-            // Phase 4a Task 4 wires up the rmcp server here.
-            anyhow::bail!("serve not yet implemented");
+            serve::run().await?;
+            Ok(())
         }
         Command::Hook => {
             anyhow::bail!("hook is a Phase 5 deliverable");
