@@ -110,6 +110,47 @@ impl ServerHandler for HelixMcpServer {
             .collect();
         Ok(ListToolsResult::with_all_items(tools))
     }
+
+    async fn call_tool(
+        &self,
+        params: CallToolRequestParams,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        use crate::tools::*;
+        use helix_context_schema::ControlRequest;
+
+        let name = params.name.as_ref();
+        let args = params.arguments.unwrap_or_default();
+        let args_val = serde_json::Value::Object(args);
+
+        let kind = match ToolKind::from_name(name) {
+            Some(k) => k,
+            None => return Ok(tool_error(format!("Unknown tool: {}", name))),
+        };
+
+        let request = match kind {
+            ToolKind::HelixOpenFile => {
+                match serde_json::from_value::<HelixOpenFileArgs>(args_val) {
+                    Ok(a) => ControlRequest::OpenFile { path: a.path },
+                    Err(e) => {
+                        return Ok(tool_error(format!(
+                            "Invalid arguments for helix_open_file: {}",
+                            e
+                        )))
+                    }
+                }
+            }
+            // The other six variants land in tasks 4-6 — bail for now.
+            _ => {
+                return Ok(tool_error(format!(
+                    "Tool {} not yet implemented (Phase 4b in progress)",
+                    name
+                )))
+            }
+        };
+
+        Ok(dispatch_tool(request).await)
+    }
 }
 
 pub async fn run() -> Result<()> {
@@ -169,14 +210,3 @@ fn format_response_as_tool_result(resp: ControlResponse) -> CallToolResult {
     CallToolResult::success(vec![Content::text(text)])
 }
 
-// ---------------------------------------------------------------------------
-// call_tool placeholder — filled in by Task 3
-// ---------------------------------------------------------------------------
-// NOTE: call_tool is NOT yet implemented. rmcp's default impl returns
-// Method Not Found, which is correct for Task 2. Tasks 3-6 add the arms.
-// The _params / _context parameters are referenced to keep the compiler
-// happy if we later add the impl here without touching other files.
-fn _call_tool_note(_params: CallToolRequestParams) {
-    // This function is never called; it just documents that call_tool
-    // landing here is intentional. Task 3 adds the real impl.
-}
