@@ -20,8 +20,10 @@ pub struct HookInput {
     pub session_id: String,
     pub cwd: String,
     #[serde(default)]
+    #[allow(dead_code)] // forward-looking — Phase 6b telemetry/routing
     pub hook_event_name: Option<String>,
     #[serde(default)]
+    #[allow(dead_code)] // forward-looking — Phase 6b telemetry/routing
     pub transcript_path: Option<String>,
 }
 
