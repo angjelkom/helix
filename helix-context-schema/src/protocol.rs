@@ -119,6 +119,14 @@ pub enum ControlRequest {
     },
     OpenFile {
         path: String,
+        /// Optional 1-indexed line to jump to after opening. View recenters
+        /// on this line. When omitted, the cursor lands wherever it last
+        /// was in the file (or line 1 for a new buffer).
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        line: Option<usize>,
+        /// Optional 1-indexed column. Ignored unless `line` is also set.
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        column: Option<usize>,
     },
     GotoLine {
         line: usize,

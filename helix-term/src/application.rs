@@ -1940,7 +1940,7 @@ impl Application {
                     }
                 }
             }
-            ControlRequest::OpenFile { path } => {
+            ControlRequest::OpenFile { path, line, column } => {
                 let (workspace, is_cwd_fallback) = helix_loader::find_workspace();
                 let resolved_path: std::path::PathBuf = {
                     let p = std::path::Path::new(&path);
@@ -1955,8 +1955,44 @@ impl Application {
                     }
                 };
 
-                match self.editor.open(&resolved_path, helix_view::editor::Action::Replace) {
-                    Ok(_) => {
+                let result = match self
+                    .editor
+                    .open(&resolved_path, helix_view::editor::Action::Replace)
+                {
+                    Ok(doc_id) => {
+                        // Optional jump to (line, column) once the buffer is open.
+                        // Mirrors goto-line: clamp line and column to the buffer,
+                        // recenter the view so the user sees the target.
+                        if let Some(target_line) = line {
+                            let view_id = self.editor.tree.focus;
+                            if let Some(doc) = self.editor.documents.get_mut(&doc_id) {
+                                let text = doc.text();
+                                let last_line = text.len_lines().saturating_sub(1);
+                                let zero_line =
+                                    target_line.saturating_sub(1).min(last_line);
+                                let line_start = text.line_to_char(zero_line);
+                                let line_end = if zero_line + 1 < text.len_lines() {
+                                    text.line_to_char(zero_line + 1).saturating_sub(1)
+                                } else {
+                                    text.len_chars()
+                                };
+                                let zero_col = column.unwrap_or(1).saturating_sub(1);
+                                let char_idx = (line_start + zero_col).min(line_end);
+                                doc.set_selection(
+                                    view_id,
+                                    helix_core::Selection::point(char_idx),
+                                );
+                            }
+                            let scrolloff = self.editor.config().scrolloff;
+                            if let Some(view) = self.editor.tree.try_get(view_id) {
+                                if let Some(doc) =
+                                    self.editor.documents.get_mut(&doc_id)
+                                {
+                                    view.ensure_cursor_in_view_center(doc, scrolloff);
+                                }
+                            }
+                        }
+
                         // Snapshot rewrite per spec §5.5 — direct call, not via
                         // helix_event::dispatch, to avoid firing Steel hooks.
                         let instance = self.control_socket_binding.as_ref().map(|s| s.to_instance());
@@ -1974,7 +2010,8 @@ impl Application {
                         message: format!("failed to open {}: {}", resolved_path.display(), e),
                         data: None,
                     }),
-                }
+                };
+                result
             }
             ControlRequest::GotoLine { line, column, path } => {
                 let (workspace, _) = helix_loader::find_workspace();

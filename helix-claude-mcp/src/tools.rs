@@ -39,8 +39,11 @@ impl ToolKind {
     pub const fn description(self) -> &'static str {
         match self {
             Self::HelixOpenFile => {
-                "Open a file in the running Helix editor and focus it. \
-                 Path is absolute or relative to the workspace root."
+                "Open a file in the running Helix editor and focus it. Path is absolute \
+                 or relative to the workspace root. Optionally pass line (and column, both \
+                 1-indexed) to jump and center the view on that position — useful for \
+                 showing the user exactly where you're about to make changes before \
+                 calling Edit/Write."
             }
             Self::HelixGotoLine => {
                 "Move the cursor in the running Helix editor to a 1-indexed line \
@@ -103,7 +106,9 @@ impl ToolKind {
             Self::HelixOpenFile => json!({
                 "type": "object",
                 "properties": {
-                    "path": { "type": "string", "description": "File path, absolute or workspace-relative" }
+                    "path": { "type": "string", "description": "File path, absolute or workspace-relative" },
+                    "line": { "type": "integer", "minimum": 1, "description": "Optional 1-indexed line to jump to after opening. View recenters on this line." },
+                    "column": { "type": "integer", "minimum": 1, "description": "Optional 1-indexed column. Ignored unless `line` is also set." }
                 },
                 "required": ["path"]
             }),
@@ -214,6 +219,10 @@ impl ToolKind {
 #[derive(Debug, Deserialize)]
 pub struct HelixOpenFileArgs {
     pub path: String,
+    #[serde(default)]
+    pub line: Option<usize>,
+    #[serde(default)]
+    pub column: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -329,6 +338,17 @@ mod tests {
         let v = json!({"path": "src/main.rs"});
         let a: HelixOpenFileArgs = serde_json::from_value(v).unwrap();
         assert_eq!(a.path, "src/main.rs");
+        assert!(a.line.is_none());
+        assert!(a.column.is_none());
+    }
+
+    #[test]
+    fn open_file_args_with_line_and_column() {
+        let v = json!({"path": "src/main.rs", "line": 42, "column": 5});
+        let a: HelixOpenFileArgs = serde_json::from_value(v).unwrap();
+        assert_eq!(a.path, "src/main.rs");
+        assert_eq!(a.line, Some(42));
+        assert_eq!(a.column, Some(5));
     }
 
     #[test]
