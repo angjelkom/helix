@@ -300,7 +300,7 @@ Shared LSP types (defined in `helix-context-schema`):
 
 | Method | Params | Returns |
 |---|---|---|
-| `open-file` | `{path}` | `Ok {}` |
+| `open-file` | `{path, line?, column?}` | `Ok {}` (when `line` is given, the cursor jumps and the view recenters — useful as a "show me where you're about to edit" call) |
 | `goto-line` | `{line, column?, path?}` | `Ok {}` (view recenters on the target line so the user sees surrounding context) |
 | `select-range` | `{start_line, start_column, end_line, end_column, path?}` | `Ok {}` (1-indexed inclusive; `start` is anchor, `end` is head; view recenters on head) |
 | `run-command` | `{name, args: []}` | `{message?: string}` (last status text from the editor) |
@@ -374,7 +374,7 @@ Per convention (Resources = static state, Tools = LLM-initiated actions/queries)
 - `helix://state/snapshot` — same as the .helix/context.json content
 
 **Tools** (Claude calls via `tools/call`):
-- `helix_open_file(path)`
+- `helix_open_file(path, line?, column?)`
 - `helix_goto_line(line, column?, path?)`
 - `helix_select(start_line, start_column, end_line, end_column, path?)`
 - `helix_get_hover(line, column, path?, allow_insert_mode?)`
@@ -385,7 +385,7 @@ Per convention (Resources = static state, Tools = LLM-initiated actions/queries)
 - `helix_format_document(path?)`
 - `helix_run_command(name, args)`
 
-`helix_open_file` takes only `path`; clients that want to land on a specific position call `helix_goto_line` (with a `path`) after opening. An earlier draft of this spec listed `line?, column?` on `helix_open_file`, but the separate goto-line tool covers the case with no ambiguity about which arg owns the position.
+`helix_open_file` accepts an optional `line` (and `column`) so a single tool call opens the file and centers the view on the target — typically used by Claude immediately before making edits, so the user sees where the change is about to land. Clients that need to navigate inside an already-open buffer use `helix_goto_line` instead.
 
 Names use underscores rather than dots. MCP's specification allows `.` in tool names, but Claude Code's validator is stricter — `^[a-zA-Z0-9_-]+$` is the safe alphabet. Avoid dots to dodge any client-side rejection.
 
