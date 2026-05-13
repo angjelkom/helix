@@ -164,7 +164,12 @@ fn resolve_buffer<'a>(
                     }) == Some(abs_canon.clone())
                 })
                 .ok_or(JsonRpcError {
-                    code: JsonRpcErrorCode::PathOutsideWorkspace,
+                    // `InvalidParams` is the right code: the caller named a
+                    // path the editor isn't currently editing. The earlier
+                    // `PathOutsideWorkspace` was misleading — nothing here
+                    // enforces a workspace boundary; the buffer just isn't
+                    // open. Reserve `PathOutsideWorkspace` for future use.
+                    code: JsonRpcErrorCode::InvalidParams,
                     message: format!("no buffer open for path: {}", abs.display()),
                     data: None,
                 })
@@ -175,7 +180,6 @@ fn resolve_buffer<'a>(
 /// Returns Err(BufferModeUnsafe) if the editor is in Insert mode and the
 /// caller didn't pass `allow_insert_mode: true`. Used by LSP-position
 /// methods to avoid querying garbage mid-typing positions.
-#[allow(dead_code)]
 fn ensure_buffer_mode_safe(
     editor: &helix_view::Editor,
     allow_insert_mode: Option<bool>,
@@ -200,7 +204,6 @@ fn ensure_buffer_mode_safe(
 /// `convert` is called from the task to map the LSP response into a
 /// ControlResponse. `convert` is `Send + 'static` and runs off the
 /// editor thread; it should not touch &Editor or any of its derivatives.
-#[allow(dead_code)]
 fn spawn_lsp_request<F, T, C>(
     reply: tokio::sync::oneshot::Sender<
         Result<
@@ -236,7 +239,6 @@ fn spawn_lsp_request<F, T, C>(
 
 /// Flatten LSP `HoverContents` (MarkedString and MarkupContent variants) into
 /// a single plain-text string for `LspHover.contents`.
-#[allow(dead_code)]
 fn lsp_hover_contents_to_string(c: &lsp::HoverContents) -> String {
     use lsp::{HoverContents, MarkedString};
     match c {
@@ -2490,7 +2492,6 @@ impl Application {
             ControlRequest::RunCommand { name, args } => {
                 use crate::commands::typed::TYPABLE_COMMAND_MAP;
                 use helix_core::command_line::Args as CmdArgs;
-                use helix_view::expansion;
 
                 let Some(cmd) = TYPABLE_COMMAND_MAP.get(name.as_str()) else {
                     let _ = reply.send(Err(JsonRpcError {
@@ -2501,26 +2502,35 @@ impl Application {
                     return;
                 };
 
-                let args_str = args.join(" ");
-                let args_parsed = match CmdArgs::parse(
-                    &args_str,
-                    cmd.signature,
-                    true,
-                    |token| {
-                        expansion::expand(&self.editor, token)
-                            .map_err(|e| e.into())
-                    },
-                ) {
-                    Ok(a) => a,
-                    Err(e) => {
-                        let _ = reply.send(Err(JsonRpcError {
-                            code: JsonRpcErrorCode::InvalidParams,
-                            message: format!("invalid args for {}: {}", name, e),
-                            data: None,
-                        }));
-                        return;
+                // Build Args directly from the Vec<String> rather than
+                // re-tokenizing `args.join(" ")` — that round-trip destroys
+                // argument boundaries for anything containing whitespace or
+                // shell-metacharacters. Each element of `args` becomes one
+                // token; `%{...}` expansion is intentionally skipped so MCP
+                // clients pass literal strings.
+                let mut args_parsed = CmdArgs::new(cmd.signature, true);
+                let mut arg_err: Option<String> = None;
+                for arg in &args {
+                    if let Err(e) =
+                        args_parsed.push(std::borrow::Cow::Borrowed(arg.as_str()))
+                    {
+                        arg_err = Some(e.to_string());
+                        break;
                     }
-                };
+                }
+                if arg_err.is_none() {
+                    if let Err(e) = args_parsed.finish() {
+                        arg_err = Some(e.to_string());
+                    }
+                }
+                if let Some(message) = arg_err {
+                    let _ = reply.send(Err(JsonRpcError {
+                        code: JsonRpcErrorCode::InvalidParams,
+                        message: format!("invalid args for {}: {}", name, message),
+                        data: None,
+                    }));
+                    return;
+                }
 
                 let mut cx = crate::compositor::Context {
                     editor: &mut self.editor,
