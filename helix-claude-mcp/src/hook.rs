@@ -72,7 +72,22 @@ pub fn read_marker_mtime(path: &Path) -> Option<u64> {
 
 pub fn write_marker_mtime(path: &Path, mtime: u64) -> io::Result<()> {
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
+        // Create with 0700 atomically on unix to close the brief window
+        // between `create_dir_all(parent)` (umask-honoring, typically 0755)
+        // and a follow-up `set_permissions(0o700)`. Best-effort on race —
+        // `create_dir_all` is a no-op if the dir already exists, in which
+        // case we still try to set 0700 below as belt-and-suspenders.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            let mut b = std::fs::DirBuilder::new();
+            b.recursive(true).mode(0o700);
+            b.create(parent)?;
+        }
+        #[cfg(not(unix))]
+        {
+            std::fs::create_dir_all(parent)?;
+        }
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -216,7 +231,13 @@ pub async fn run(reset_marker: bool) -> Result<()> {
             Ok(())
         }
         HookDecision::Emit { snapshot_path, snapshot_mtime } => {
-            emit_wrapped_snapshot(&snapshot_path)?;
+            // README/spec: "the hook is best-effort and never fails the user's
+            // prompt." Emit failures (snapshot deleted between decide+emit,
+            // stdout closed mid-write) must not bubble up to a non-zero exit.
+            if let Err(e) = emit_wrapped_snapshot(&snapshot_path) {
+                log::warn!("hook: emitting snapshot failed: {}", e);
+                return Ok(());
+            }
             // Update the marker AFTER emission so a write failure here doesn't
             // suppress the actually-needed inject next time.
             let marker_p = marker_path(&input.session_id);
