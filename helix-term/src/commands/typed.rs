@@ -968,6 +968,26 @@ fn force_write_all_quit(
     quit_all_impl(cx, true)
 }
 
+fn write_context(
+    cx: &mut compositor::Context,
+    _args: Args,
+    event: PromptEvent,
+) -> anyhow::Result<()> {
+    if event != PromptEvent::Validate {
+        return Ok(());
+    }
+    if let Err(e) = crate::context_logger::write_context_file(
+        cx.editor,
+        helix_context_schema::UpdateSource::Manual,
+        None,
+    ) {
+        cx.editor.set_error(format!("write-context: {}", e));
+        return Err(anyhow::anyhow!("write-context failed: {}", e));
+    }
+    cx.editor.set_status("context snapshot written");
+    Ok(())
+}
+
 fn quit_all_impl(cx: &mut compositor::Context, force: bool) -> anyhow::Result<()> {
     cx.block_try_flush_writes()?;
     if !force {
@@ -3127,6 +3147,18 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
         signature: Signature {
             positionals: (0, Some(1)),
             flags: &[WRITE_NO_FORMAT_FLAG],
+            ..Signature::DEFAULT
+        },
+    },
+    TypableCommand {
+        name: "write-context",
+        aliases: &[],
+        doc: "Write the context-logger snapshot to disk. Useful to force a refresh \
+              for an external tool (e.g. Claude Code) without switching terminal panes.",
+        fun: write_context,
+        completer: CommandCompleter::none(),
+        signature: Signature {
+            positionals: (0, Some(0)),
             ..Signature::DEFAULT
         },
     },
