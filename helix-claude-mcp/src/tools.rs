@@ -10,6 +10,7 @@ use serde_json::{json, Value};
 pub enum ToolKind {
     HelixOpenFile,
     HelixGotoLine,
+    HelixSelect,
     HelixGetDiagnostics,
     HelixGetHover,
     HelixGetDefinition,
@@ -24,6 +25,7 @@ impl ToolKind {
         match self {
             Self::HelixOpenFile => "helix_open_file",
             Self::HelixGotoLine => "helix_goto_line",
+            Self::HelixSelect => "helix_select",
             Self::HelixGetDiagnostics => "helix_get_diagnostics",
             Self::HelixGetHover => "helix_get_hover",
             Self::HelixGetDefinition => "helix_get_definition",
@@ -44,6 +46,14 @@ impl ToolKind {
                 "Move the cursor in the running Helix editor to a 1-indexed line \
                  (and optional column). When path is given, switches to that buffer first; \
                  the buffer must already be open."
+            }
+            Self::HelixSelect => {
+                "Select a range in the running Helix editor's buffer, from \
+                 (start_line, start_column) to (end_line, end_column), all 1-indexed and \
+                 inclusive. `start` becomes the anchor and `end` becomes the cursor head; \
+                 the view scrolls so the selection is centered. Use this to show the user \
+                 a specific region or to set up a selection for a follow-up `helix_run_command`. \
+                 When path is given, switches to that buffer first."
             }
             Self::HelixGetDiagnostics => {
                 "Return all LSP diagnostics for a file (defaults to active buffer). \
@@ -105,6 +115,17 @@ impl ToolKind {
                 },
                 "required": ["line"]
             }),
+            Self::HelixSelect => json!({
+                "type": "object",
+                "properties": {
+                    "start_line": { "type": "integer", "minimum": 1, "description": "Selection start line, 1-indexed" },
+                    "start_column": { "type": "integer", "minimum": 1, "description": "Selection start column, 1-indexed" },
+                    "end_line": { "type": "integer", "minimum": 1, "description": "Selection end line, 1-indexed" },
+                    "end_column": { "type": "integer", "minimum": 1, "description": "Selection end column, 1-indexed" },
+                    "path": { "type": "string", "description": "Buffer path (optional; defaults to active)" }
+                },
+                "required": ["start_line", "start_column", "end_line", "end_column"]
+            }),
             Self::HelixGetDiagnostics => json!({
                 "type": "object",
                 "properties": {
@@ -160,6 +181,7 @@ impl ToolKind {
         match name {
             "helix_open_file" => Some(Self::HelixOpenFile),
             "helix_goto_line" => Some(Self::HelixGotoLine),
+            "helix_select" => Some(Self::HelixSelect),
             "helix_get_diagnostics" => Some(Self::HelixGetDiagnostics),
             "helix_get_hover" => Some(Self::HelixGetHover),
             "helix_get_definition" => Some(Self::HelixGetDefinition),
@@ -175,6 +197,7 @@ impl ToolKind {
         [
             Self::HelixOpenFile,
             Self::HelixGotoLine,
+            Self::HelixSelect,
             Self::HelixGetDiagnostics,
             Self::HelixGetHover,
             Self::HelixGetDefinition,
@@ -197,6 +220,16 @@ pub struct HelixGotoLineArgs {
     pub line: usize,
     #[serde(default)]
     pub column: Option<usize>,
+    #[serde(default)]
+    pub path: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct HelixSelectArgs {
+    pub start_line: usize,
+    pub start_column: usize,
+    pub end_line: usize,
+    pub end_column: usize,
     #[serde(default)]
     pub path: Option<String>,
 }
@@ -252,9 +285,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn all_iterates_nine_kinds() {
+    fn all_iterates_ten_kinds() {
         let kinds: Vec<_> = ToolKind::all().collect();
-        assert_eq!(kinds.len(), 9);
+        assert_eq!(kinds.len(), 10);
     }
 
     #[test]

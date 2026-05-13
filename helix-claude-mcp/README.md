@@ -62,6 +62,7 @@ Phase 4b shipped these tools. Claude Code can call any of them via MCP `tools/ca
 |---|---|
 | `helix_open_file` | Open a file in Helix and focus it. |
 | `helix_goto_line` | Move the cursor to a line/column. |
+| `helix_select` | Select a range from (start_line, start_column) to (end_line, end_column); view recenters on the selection. |
 | `helix_get_diagnostics` | List LSP diagnostics for a file. |
 | `helix_get_hover` | LSP hover info at a position. |
 | `helix_get_definition` | LSP goto-definition. |

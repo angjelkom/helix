@@ -228,7 +228,7 @@ async fn resources_read_current_returns_active_block() {
 }
 
 #[tokio::test]
-async fn tools_list_returns_seven_tools() {
+async fn tools_list_returns_all_registered_tools() {
     let tmp = TempDir::new().unwrap();
     let helix = tmp.path().join(".helix");
     std::fs::create_dir(&helix).unwrap();
@@ -264,9 +264,10 @@ async fn tools_list_returns_seven_tools() {
             if n == 0 { break; }
             if line.contains("\"id\":2") {
                 for tool in [
-                    "helix_open_file", "helix_goto_line", "helix_get_diagnostics",
-                    "helix_get_hover", "helix_get_definition", "helix_get_references",
-                    "helix_get_workspace_symbols",
+                    "helix_open_file", "helix_goto_line", "helix_select",
+                    "helix_get_diagnostics", "helix_get_hover", "helix_get_definition",
+                    "helix_get_references", "helix_get_workspace_symbols",
+                    "helix_format_document", "helix_run_command",
                 ] {
                     assert!(line.contains(tool), "missing tool: {}\nfull line: {}", tool, line);
                 }
@@ -324,6 +325,57 @@ async fn tools_call_open_file_succeeds_against_fake_helix() {
                 // Success response. Should contain the ok JSON in tool result content.
                 assert!(line.contains("\"ok\"") || line.contains("ok"), "expected ok in response: {}", line);
                 assert!(!line.contains("\"isError\":true"), "got error: {}", line);
+                found = true;
+                break;
+            }
+        }
+    }
+    assert!(found, "didn't see tools/call response");
+    drop(stdin);
+    let _ = child.kill().await;
+}
+
+#[tokio::test]
+async fn tools_call_select_succeeds_against_fake_helix() {
+    let tmp = TempDir::new().unwrap();
+    let helix = tmp.path().join(".helix");
+    std::fs::create_dir(&helix).unwrap();
+    std::fs::write(helix.join("context.json"), SAMPLE_SNAPSHOT).unwrap();
+
+    let canned = r#"{"method":"ok","result":{}}"#.to_string() + "\n";
+    let _sock = spawn_fake_helix_in(tmp.path(), canned).await;
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let mut child = Command::new(binary_path())
+        .arg("serve")
+        .env("CLAUDE_PROJECT_DIR", tmp.path())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let stdout = child.stdout.take().unwrap();
+    let mut reader = BufReader::new(stdout);
+
+    for msg in [
+        r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"t","version":"0.1"}}}"#,
+        r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
+        r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"helix_select","arguments":{"start_line":1,"start_column":1,"end_line":3,"end_column":10}}}"#,
+    ] {
+        stdin.write_all(msg.as_bytes()).await.unwrap();
+        stdin.write_all(b"\n").await.unwrap();
+    }
+    stdin.flush().await.unwrap();
+
+    let mut found = false;
+    for _ in 0..6 {
+        let mut line = String::new();
+        if let Ok(n) = reader.read_line(&mut line).await {
+            if n == 0 { break; }
+            if line.contains("\"id\":2") {
+                assert!(!line.contains("\"isError\":true"), "got error: {}", line);
+                assert!(line.contains("ok"), "expected ok in response: {}", line);
                 found = true;
                 break;
             }

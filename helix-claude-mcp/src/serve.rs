@@ -150,6 +150,18 @@ impl ServerHandler for HelixMcpServer {
                     Err(e) => return Ok(tool_error(format!("Invalid arguments for helix_goto_line: {}", e))),
                 }
             }
+            ToolKind::HelixSelect => {
+                match serde_json::from_value::<HelixSelectArgs>(args_val) {
+                    Ok(a) => ControlRequest::SelectRange {
+                        start_line: a.start_line,
+                        start_column: a.start_column,
+                        end_line: a.end_line,
+                        end_column: a.end_column,
+                        path: a.path,
+                    },
+                    Err(e) => return Ok(tool_error(format!("Invalid arguments for helix_select: {}", e))),
+                }
+            }
             ToolKind::HelixGetDiagnostics => {
                 match serde_json::from_value::<HelixGetDiagnosticsArgs>(args_val) {
                     Ok(a) => ControlRequest::GetDiagnostics { path: a.path },
