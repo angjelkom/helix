@@ -27,7 +27,7 @@ pub enum DiscoveryError {
 pub async fn find_helix_socket(
     workspace_override: Option<&Path>,
 ) -> Result<PathBuf, DiscoveryError> {
-    let workspace = match workspace_override {
+    let start = match workspace_override {
         Some(p) => p.to_path_buf(),
         None => {
             std::env::var_os("CLAUDE_PROJECT_DIR")
@@ -37,6 +37,11 @@ pub async fn find_helix_socket(
         }
     };
 
+    // Walk up looking for the first ancestor (inclusive) that contains a
+    // `.helix/` directory. Mirrors the hook's behavior so the bridge keeps
+    // working when Claude Code is launched from a subdirectory of the
+    // workspace.
+    let workspace = walk_up_to_helix(&start).unwrap_or(start);
     let helix_dir = workspace.join(".helix");
     if !helix_dir.exists() {
         return Err(DiscoveryError::NoLiveSocket(workspace));
@@ -95,6 +100,21 @@ pub async fn find_helix_socket(
         .next()
         .map(|(p, _)| p)
         .ok_or(DiscoveryError::NoLiveSocket(workspace))
+}
+
+/// Walk up from `start` looking for the first ancestor (inclusive) that
+/// contains a `.helix/` directory. Returns None if no such ancestor
+/// exists.
+fn walk_up_to_helix(start: &Path) -> Option<PathBuf> {
+    let mut current = start.to_path_buf();
+    loop {
+        if current.join(".helix").is_dir() {
+            return Some(current);
+        }
+        if !current.pop() {
+            return None;
+        }
+    }
 }
 
 /// Read up to `max` bytes from `path`. Refuses files larger than `max`

@@ -63,16 +63,38 @@ fn load_snapshot(workspace: &Path) -> Option<ContextSnapshot> {
     serde_json::from_str(&text).ok()
 }
 
-/// Resolve `<workspace>` for the resource read. Mirrors discovery: env
-/// override > CLAUDE_PROJECT_DIR > current dir.
+/// Resolve `<workspace>` for the resource read. Order: explicit override,
+/// then `CLAUDE_PROJECT_DIR`, then current dir. Whichever starting point we
+/// pick, we then walk *up* looking for the first ancestor that contains a
+/// `.helix/` directory — mirroring the hook's `locate_snapshot`. Without
+/// the walk-up, launching Claude Code from a subdirectory of the workspace
+/// (or with `CLAUDE_PROJECT_DIR` set to a parent or sibling) would silently
+/// fail to find the snapshot even though Helix is writing it one level up.
 pub fn resolve_workspace(workspace_override: Option<&Path>) -> Result<PathBuf> {
-    if let Some(p) = workspace_override {
-        return Ok(p.to_path_buf());
+    let start = if let Some(p) = workspace_override {
+        p.to_path_buf()
+    } else if let Some(p) = std::env::var_os("CLAUDE_PROJECT_DIR").map(PathBuf::from) {
+        p
+    } else {
+        std::env::current_dir().context("no CLAUDE_PROJECT_DIR and current_dir unavailable")?
+    };
+    Ok(find_workspace_with_helix_dir(&start).unwrap_or(start))
+}
+
+/// Walk up from `start` looking for the first ancestor (inclusive) that
+/// contains a `.helix/` subdirectory. Returns None if no such ancestor
+/// exists — callers fall back to `start` so behavior is unchanged for
+/// users who launch Claude Code from exactly the workspace root.
+fn find_workspace_with_helix_dir(start: &Path) -> Option<PathBuf> {
+    let mut current = start.to_path_buf();
+    loop {
+        if current.join(".helix").is_dir() {
+            return Some(current);
+        }
+        if !current.pop() {
+            return None;
+        }
     }
-    if let Some(p) = std::env::var_os("CLAUDE_PROJECT_DIR").map(PathBuf::from) {
-        return Ok(p);
-    }
-    std::env::current_dir().context("no CLAUDE_PROJECT_DIR and current_dir unavailable")
 }
 
 /// Produce the resource body for the given URI. Returns a JSON string in
@@ -180,6 +202,50 @@ mod tests {
         let body = read_resource(ResourceKind::Current, tmp.path());
         let j: serde_json::Value = serde_json::from_str(&body).unwrap();
         assert!(j["error"].is_string());
+    }
+
+    #[test]
+    fn resolve_workspace_walks_up_to_find_helix_dir() {
+        let _lock = crate::TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let saved = std::env::var_os("CLAUDE_PROJECT_DIR");
+        // Build: <tmp>/ws/.helix/  and  <tmp>/ws/sub/deeper/
+        let tmp = TempDir::new().unwrap();
+        let ws = tmp.path().join("ws");
+        let nested = ws.join("sub").join("deeper");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::create_dir(ws.join(".helix")).unwrap();
+        // Point CLAUDE_PROJECT_DIR at the nested directory. Walk-up should
+        // climb back to <tmp>/ws (the workspace containing .helix/).
+        std::env::set_var("CLAUDE_PROJECT_DIR", &nested);
+        let resolved = resolve_workspace(None).unwrap();
+        // Restore env before asserting (so a panic doesn't leak it).
+        match saved {
+            Some(v) => std::env::set_var("CLAUDE_PROJECT_DIR", v),
+            None => std::env::remove_var("CLAUDE_PROJECT_DIR"),
+        }
+        // canonicalize() collapses /private/var/folders symlinks on macOS
+        // — compare canonicalized forms for portability.
+        assert_eq!(
+            resolved.canonicalize().unwrap(),
+            ws.canonicalize().unwrap(),
+        );
+    }
+
+    #[test]
+    fn resolve_workspace_falls_back_to_start_when_no_helix_ancestor() {
+        let _lock = crate::TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let saved = std::env::var_os("CLAUDE_PROJECT_DIR");
+        let tmp = TempDir::new().unwrap();
+        std::env::set_var("CLAUDE_PROJECT_DIR", tmp.path());
+        let resolved = resolve_workspace(None).unwrap();
+        match saved {
+            Some(v) => std::env::set_var("CLAUDE_PROJECT_DIR", v),
+            None => std::env::remove_var("CLAUDE_PROJECT_DIR"),
+        }
+        assert_eq!(
+            resolved.canonicalize().unwrap(),
+            tmp.path().canonicalize().unwrap(),
+        );
     }
 
     #[test]
