@@ -2397,12 +2397,80 @@ impl Application {
                 );
                 return;
             }
-            ControlRequest::FormatDocument { .. } => {
-                Err(JsonRpcError {
-                    code: JsonRpcErrorCode::MethodNotFound,
-                    message: "format-document handler not yet implemented".into(),
-                    data: None,
-                })
+            ControlRequest::FormatDocument { path } => {
+                use crate::commands::typed::TYPABLE_COMMAND_MAP;
+                use helix_core::command_line::Args as CmdArgs;
+                use helix_view::expansion;
+
+                let (workspace, _) = helix_loader::find_workspace();
+                if let Some(p) = path.as_deref() {
+                    let doc_id = match resolve_buffer(&self.editor, &workspace, Some(p)) {
+                        Ok(doc) => doc.id(),
+                        Err(e) => {
+                            let _ = reply.send(Err(e));
+                            return;
+                        }
+                    };
+                    let current_doc_id = self
+                        .editor
+                        .documents
+                        .get(&self.editor.tree.get(self.editor.tree.focus).doc)
+                        .map(|d| d.id());
+                    if Some(doc_id) != current_doc_id {
+                        self.editor.switch(doc_id, helix_view::editor::Action::Replace);
+                    }
+                }
+
+                // Find the :format typable command.
+                let Some(cmd) = TYPABLE_COMMAND_MAP.get("format") else {
+                    let _ = reply.send(Err(JsonRpcError {
+                        code: JsonRpcErrorCode::InternalError,
+                        message: "internal: typable command 'format' not found in TYPABLE_COMMAND_MAP".into(),
+                        data: None,
+                    }));
+                    return;
+                };
+
+                // Empty Args — :format takes no arguments.
+                let args_parsed = match CmdArgs::parse(
+                    "",
+                    cmd.signature,
+                    true,
+                    |token| {
+                        expansion::expand(&self.editor, token)
+                            .map_err(|e| e.into())
+                    },
+                ) {
+                    Ok(a) => a,
+                    Err(e) => {
+                        let _ = reply.send(Err(JsonRpcError {
+                            code: JsonRpcErrorCode::InternalError,
+                            message: format!("format args parse failed: {}", e),
+                            data: None,
+                        }));
+                        return;
+                    }
+                };
+
+                let mut cx = crate::compositor::Context {
+                    editor: &mut self.editor,
+                    scroll: None,
+                    jobs: &mut self.jobs,
+                };
+                let applied = (cmd.fun)(&mut cx, args_parsed, crate::ui::PromptEvent::Validate).is_ok();
+
+                // Snapshot rewrite — formatting mutates the buffer (asynchronously via jobs).
+                let instance = self.control_socket_binding.as_ref().map(|s| s.to_instance());
+                if let Err(e) = crate::context_logger::write_context_file(
+                    &self.editor,
+                    helix_context_schema::UpdateSource::McpCommand,
+                    instance,
+                ) {
+                    log::warn!("control-socket: snapshot rewrite failed after format-document: {}", e);
+                }
+
+                let _ = reply.send(Ok(ControlResponse::FormatDocument { applied }));
+                return;
             }
             ControlRequest::RunCommand { name, args } => {
                 use crate::commands::typed::TYPABLE_COMMAND_MAP;
