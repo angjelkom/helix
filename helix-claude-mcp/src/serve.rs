@@ -156,7 +156,29 @@ impl ServerHandler for HelixMcpServer {
                     Err(e) => return Ok(tool_error(format!("Invalid arguments for helix_get_diagnostics: {}", e))),
                 }
             }
-            // The other four variants land in tasks 5-6 — bail for now.
+            ToolKind::HelixGetHover => {
+                match serde_json::from_value::<HelixPositionArgs>(args_val) {
+                    Ok(a) => ControlRequest::GetHoverAt {
+                        line: a.line,
+                        column: a.column,
+                        path: a.path,
+                        allow_insert_mode: a.allow_insert_mode,
+                    },
+                    Err(e) => return Ok(tool_error(format!("Invalid arguments for helix_get_hover: {}", e))),
+                }
+            }
+            ToolKind::HelixGetDefinition => {
+                match serde_json::from_value::<HelixPositionArgs>(args_val) {
+                    Ok(a) => ControlRequest::GetDefinitionAt {
+                        line: a.line,
+                        column: a.column,
+                        path: a.path,
+                        allow_insert_mode: a.allow_insert_mode,
+                    },
+                    Err(e) => return Ok(tool_error(format!("Invalid arguments for helix_get_definition: {}", e))),
+                }
+            }
+            // The other two variants land in task 6 — bail for now.
             _ => {
                 return Ok(tool_error(format!(
                     "Tool {} not yet implemented (Phase 4b in progress)",
