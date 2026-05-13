@@ -49,6 +49,130 @@ Note: Only certain languages have indentation definitions at the moment. Check
 
 [![Packaging status](https://repology.org/badge/vertical-allrepos/helix-editor.svg?exclude_unsupported=1)](https://repology.org/project/helix-editor/versions)
 
+# This fork
+
+This is a personal fork that adds two things on top of upstream Helix:
+
+- **Steel plugin system.** Merged from the upstream `steel-engine` work. See [`STEEL.md`](./STEEL.md) and [`steel-docs.md`](./steel-docs.md).
+- **Claude Code bridge.** Lets [Claude Code](https://claude.com/claude-code) read live editor state and drive the editor through Unix-socket RPC. Design spec: [`docs/specs/2026-05-12-helix-claude-mcp-bridge-design.md`](./docs/specs/2026-05-12-helix-claude-mcp-bridge-design.md). Bridge crate readme: [`helix-claude-mcp/README.md`](./helix-claude-mcp/README.md).
+
+## Building
+
+Build the editor and the MCP bridge binary, both with `target-cpu=native`:
+
+```bash
+cargo install \
+  --profile opt \
+  --config 'build.rustflags="-C target-cpu=native"' \
+  --path helix-term \
+  --locked
+
+cargo install \
+  --profile opt \
+  --config 'build.rustflags="-C target-cpu=native"' \
+  --path helix-claude-mcp \
+  --locked
+```
+
+That places `hx` and `helix-claude-mcp` in `~/.cargo/bin`. Restart any running Helix sessions and Claude Code sessions after a rebuild — both cache the spawned process per session.
+
+## Helix configuration
+
+In `~/.config/helix/config.toml`:
+
+```toml
+[editor.context-logger]
+enabled = true                              # writes <workspace>/.helix/context.json on focus loss
+include-selection-text = true               # default — current selection appears in the snapshot
+include-buffer-text = false                 # default — flip on for full buffer dumps (large)
+max-selection-bytes = 8192                  # default — truncates long selections
+
+[editor.control-socket]
+enabled = true                              # binds <workspace>/.helix/control-<pid>.sock for the MCP bridge
+```
+
+Both default to `enabled = false`, so opting in is explicit. With both enabled:
+
+- A JSON snapshot of editor state is written to `.helix/context.json` whenever the terminal loses focus (or when you run `:write-context` manually).
+- A per-process Unix socket appears at `.helix/control-<pid>.sock`, mode 0600, listening for control RPC from the bridge.
+
+## Claude Code MCP server
+
+Tell Claude Code about the bridge. Either project-scoped (committed to the repo) in `<workspace>/.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "helix": {
+      "command": "helix-claude-mcp",
+      "args": ["serve"]
+    }
+  }
+}
+```
+
+…or globally in `~/.claude.json` under the same `"mcpServers"` key. Claude Code spawns the binary per session and sets `CLAUDE_PROJECT_DIR` automatically.
+
+## Claude Code hooks (passive context injection)
+
+The bridge also ships a `hook` subcommand that injects a `<helix-editor-context>` block into each prompt. In `~/.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          { "type": "command", "command": "helix-claude-mcp hook", "timeout": 5 }
+        ]
+      }
+    ],
+    "PostCompact": [
+      {
+        "hooks": [
+          { "type": "command", "command": "helix-claude-mcp hook --reset-marker" }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "compact",
+        "hooks": [
+          { "type": "command", "command": "helix-claude-mcp hook --reset-marker" }
+        ]
+      }
+    ]
+  }
+}
+```
+
+The `UserPromptSubmit` hook injects the current snapshot into every prompt (dedup'd per session and per snapshot mtime). The `PostCompact` and `SessionStart` matcher=compact hooks clear the dedup marker so the snapshot re-injects after Claude Code compacts the conversation.
+
+## What Claude can do once it's wired up
+
+Resources (read-only, cheap):
+
+- `helix://state/current` — active buffer, cursor, selection, mode
+- `helix://state/buffers` — list of open buffers
+- `helix://state/snapshot` — the full snapshot
+
+Tools (live RPC to the editor):
+
+| Tool | What it does |
+|---|---|
+| `helix_open_file` | Open a file in Helix and focus it. |
+| `helix_goto_line` | Move cursor to a 1-indexed line/column. |
+| `helix_select` | Select a range from `(start_line, start_column)` to `(end_line, end_column)`; view recenters. |
+| `helix_get_diagnostics` | LSP diagnostics for a buffer. |
+| `helix_get_hover` | LSP hover at a position. |
+| `helix_get_definition` | LSP goto-definition. |
+| `helix_get_references` | LSP find-references. |
+| `helix_get_workspace_symbols` | LSP workspace symbol search. |
+| `helix_format_document` | Format a buffer via its LSP formatter. |
+| `helix_run_command` | Execute any Helix typable command. **Powerful** — can `:write`, `:reload`, `:run-shell-command`, etc. See spec §10b. |
+
+Tools refuse cleanly with a structured error when Helix isn't running; resources still serve the last-written snapshot via the file path so passive context survives a closed editor.
+
 # Contributing
 
 Contributing guidelines can be found [here](./docs/CONTRIBUTING.md).
