@@ -221,7 +221,7 @@ use helix_context_schema::{ControlRequest, ControlResponse};
 /// Discover the Helix socket, send `request`, format the response as an
 /// MCP tool result. Pure adapter between Phase 4a's plumbing and rmcp's
 /// tool-result type.
-pub async fn dispatch_tool(request: ControlRequest) -> CallToolResult {
+async fn dispatch_tool(request: ControlRequest) -> CallToolResult {
     use crate::{discovery, rpc_client};
 
     let socket = match discovery::find_helix_socket(None).await {
@@ -246,7 +246,7 @@ pub async fn dispatch_tool(request: ControlRequest) -> CallToolResult {
     }
 }
 
-pub fn tool_error(message: String) -> CallToolResult {
+fn tool_error(message: String) -> CallToolResult {
     CallToolResult::error(vec![Content::text(message)])
 }
 
