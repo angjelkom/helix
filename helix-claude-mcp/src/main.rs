@@ -7,6 +7,8 @@
 
 use clap::{Parser, Subcommand};
 
+mod rpc_client;
+
 #[derive(Parser)]
 #[command(name = "helix-claude-mcp", version)]
 #[command(about = "MCP bridge for the Helix editor's control socket")]
