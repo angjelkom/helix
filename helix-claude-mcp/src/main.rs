@@ -11,6 +11,7 @@ mod discovery;
 mod resources;
 mod rpc_client;
 mod serve;
+mod tools;
 
 #[derive(Parser)]
 #[command(name = "helix-claude-mcp", version)]
