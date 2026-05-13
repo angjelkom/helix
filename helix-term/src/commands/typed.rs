@@ -976,15 +976,24 @@ fn write_context(
     if event != PromptEvent::Validate {
         return Ok(());
     }
-    if let Err(e) = crate::context_logger::write_context_file(
+    match crate::context_logger::write_context_file(
         cx.editor,
         helix_context_schema::UpdateSource::Manual,
         None,
     ) {
-        cx.editor.set_error(format!("write-context: {}", e));
-        return Err(anyhow::anyhow!("write-context failed: {}", e));
+        Ok(true) => {
+            cx.editor.set_status("context snapshot written");
+        }
+        Ok(false) => {
+            cx.editor.set_status(
+                "context snapshot skipped (context-logger disabled or not in a workspace)",
+            );
+        }
+        Err(e) => {
+            cx.editor.set_error(format!("write-context: {}", e));
+            return Err(anyhow::anyhow!("write-context failed: {}", e));
+        }
     }
-    cx.editor.set_status("context snapshot written");
     Ok(())
 }
 
