@@ -8,6 +8,7 @@
 use clap::{Parser, Subcommand};
 
 mod discovery;
+mod doctor;
 mod hook;
 mod resources;
 mod rpc_client;
@@ -50,6 +51,11 @@ enum Command {
         #[arg(long)]
         verbose: bool,
     },
+    /// Run a self-diagnosis: binary on PATH, snapshot present and
+    /// parseable, control-socket connectable, initialize handshake.
+    /// Prints a five-line report. Useful when onboarding a new install
+    /// or debugging "why doesn't Claude see my editor".
+    Doctor,
 }
 
 #[tokio::main]
@@ -69,5 +75,6 @@ async fn main() -> anyhow::Result<()> {
         Command::Hook { reset_marker, verbose } => {
             hook::run(reset_marker, verbose).await
         }
+        Command::Doctor => doctor::run().await,
     }
 }
