@@ -364,6 +364,12 @@ helix-claude-mcp hook [--reset-marker]
 
 The `hook` subcommand reads JSON from stdin (Claude Code's hook payload), uses `CLAUDE_PROJECT_DIR` env var to find the right snapshot, applies dedup, prints to stdout (or skips silently).
 
+### 7.2b Server instructions (vendor-neutral agent onboarding)
+
+The MCP `initialize` response populates the optional `instructions` field with a tight operating manual: what the resources and tools are, the navigate-before-edit workflow, insert-mode safety rules, and how to degrade when Helix isn't running. Any compliant MCP client (Claude Code, Codex CLI, Cursor, Cline, Continue, Zed, …) feeds these instructions to the LLM as part of its system context, so every coding agent learns the same playbook automatically — no per-agent rules files needed.
+
+The instructions live in `helix-claude-mcp/src/serve.rs` as `SERVER_INSTRUCTIONS`. Treat them as part of the public contract: changing tool behavior requires updating the instructions in the same commit. The integration test `initialize_handshake_succeeds` asserts the field is present and non-empty, so a silent regression that drops the instructions block fails CI.
+
 ### 7.3 MCP Resources vs Tools mapping
 
 Per convention (Resources = static state, Tools = LLM-initiated actions/queries):

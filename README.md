@@ -113,6 +113,8 @@ Tell Claude Code about the bridge. Either project-scoped (committed to the repo)
 
 …or globally in `~/.claude.json` under the same `"mcpServers"` key. Claude Code spawns the binary per session and sets `CLAUDE_PROJECT_DIR` automatically.
 
+The same binary works with any MCP-compatible coding agent — Codex CLI (`~/.codex/config.toml` under `[mcp_servers.helix]`), Cursor (`~/.cursor/mcp.json`), Cline, Continue, Zed, etc. Register `helix-claude-mcp serve` as a stdio server in whatever format the agent expects. The bridge embeds its own operating instructions in the MCP `initialize` response, so any compliant agent automatically learns how to use the tools (navigate-before-edit workflow, when to read `helix://state/current`, insert-mode safety, etc.) without needing per-agent rules files.
+
 ## Claude Code hooks (passive context injection)
 
 The bridge also ships a `hook` subcommand that injects a `<helix-editor-context>` block into each prompt. In `~/.claude/settings.json`:
