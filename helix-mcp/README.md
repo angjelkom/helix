@@ -147,6 +147,18 @@ Marker file at `$XDG_RUNTIME_DIR/claude-helix/marker-${session_id}` if `XDG_RUNT
 
 Failure modes (stdin parse error, snapshot emit failure, marker write failure, etc.) exit 0 silently — the hook is best-effort and never fails the user's prompt. Errors are logged at warn level on stderr.
 
+### Debugging: `--verbose`
+
+Pass `--verbose` to emit decision breadcrumbs on stderr (parsed input, decision, emit/marker outcomes). Useful for diagnosing "why didn't my snapshot inject" without setting `RUST_LOG=debug` on every hook entry in settings.json. The flag has no effect on emission behavior — only on what reaches stderr.
+
+```bash
+echo '{"session_id":"probe","cwd":"'$PWD'"}' | helix-mcp hook --verbose
+# stderr:
+#   helix-mcp hook: input session_id=probe cwd=/Users/you/repo
+#   helix-mcp hook: decision=Emit { snapshot_path: ".../context.json", snapshot_mtime: 1715692800 }
+#   helix-mcp hook: wrote marker .../marker-probe mtime=1715692800
+```
+
 ## Migrating from the shell hook
 
 If you previously used the shell hook at `~/.claude/hooks/helix-context.sh`, replace your `~/.claude/settings.json` hooks block. The shell hook can be deleted after switching; nothing references it.
