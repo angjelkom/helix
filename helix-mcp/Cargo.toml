@@ -1,6 +1,6 @@
 [package]
-name = "helix-claude-mcp"
-description = "MCP bridge that exposes Helix editor state and commands to Claude Code."
+name = "helix-mcp"
+description = "MCP bridge that exposes Helix editor state and commands to any compliant MCP client (Claude Code, Codex, Cursor, Cline, Continue, Zed, …)."
 include = ["src/**/*", "README.md"]
 version.workspace = true
 authors.workspace = true
@@ -12,7 +12,7 @@ repository.workspace = true
 homepage.workspace = true
 
 [[bin]]
-name = "helix-claude-mcp"
+name = "helix-mcp"
 path = "src/main.rs"
 
 [dependencies]

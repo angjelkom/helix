@@ -15,7 +15,7 @@ members = [
   "helix-parsec",
   "helix-stdx",
   "helix-context-schema",
-  "helix-claude-mcp",
+  "helix-mcp",
   "xtask",
 ]
 

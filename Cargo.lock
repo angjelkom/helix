@@ -2227,23 +2227,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
-name = "helix-claude-mcp"
-version = "25.7.1"
-dependencies = [
- "anyhow",
- "clap",
- "env_logger",
- "helix-context-schema",
- "log",
- "rmcp",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.18",
- "tokio",
-]
-
-[[package]]
 name = "helix-context-schema"
 version = "25.7.1"
 dependencies = [
@@ -2384,6 +2367,23 @@ dependencies = [
  "helix-stdx",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "helix-mcp"
+version = "25.7.1"
+dependencies = [
+ "anyhow",
+ "clap",
+ "env_logger",
+ "helix-context-schema",
+ "log",
+ "rmcp",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
 ]
 
 [[package]]

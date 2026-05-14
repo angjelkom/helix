@@ -1,4 +1,4 @@
-# helix-claude-mcp
+# helix-mcp
 
 MCP bridge that exposes Helix editor state and commands to Claude Code.
 
@@ -6,7 +6,7 @@ MCP bridge that exposes Helix editor state and commands to Claude Code.
 
 A small Rust binary that bridges two pieces:
 
-- **Helix's control socket** at `<workspace>/.helix/control-<pid>.sock` (a custom JSON-RPC dialect spoken by Helix's `[editor.control-socket]` feature). See `../docs/specs/2026-05-12-helix-claude-mcp-bridge-design.md`.
+- **Helix's control socket** at `<workspace>/.helix/control-<pid>.sock` (a custom JSON-RPC dialect spoken by Helix's `[editor.control-socket]` feature). See `../docs/specs/2026-05-12-helix-mcp-bridge-design.md`.
 - **Claude Code's MCP** (Model Context Protocol) over stdio.
 
 Claude Code's `.mcp.json` configures this binary as a stdio MCP server. Once it's running, Claude can:
@@ -19,11 +19,11 @@ Claude Code's `.mcp.json` configures this binary as a stdio MCP server. Once it'
 From the workspace root:
 
 ```bash
-cargo build --release -p helix-claude-mcp
-cp target/release/helix-claude-mcp ~/.cargo/bin/
+cargo build --release -p helix-mcp
+cp target/release/helix-mcp ~/.cargo/bin/
 ```
 
-Or run it directly from `target/release/helix-claude-mcp`.
+Or run it directly from `target/release/helix-mcp`.
 
 ## Claude Code configuration
 
@@ -33,7 +33,7 @@ Add this to your project's `.mcp.json` (or to your global `~/.claude.json` MCP s
 {
   "mcpServers": {
     "helix": {
-      "command": "helix-claude-mcp",
+      "command": "helix-mcp",
       "args": ["serve"]
     }
   }
@@ -84,12 +84,12 @@ The bridge populates the MCP `initialize` response's `instructions` field with a
 
 ## Subcommands
 
-- `helix-claude-mcp serve` — stdio MCP server.
-- `helix-claude-mcp hook` — UserPromptSubmit hook handler (see below).
+- `helix-mcp serve` — stdio MCP server.
+- `helix-mcp hook` — UserPromptSubmit hook handler (see below).
 
 ## Hook subcommand
 
-`helix-claude-mcp hook` is the Rust replacement for the shell hook script at `~/.claude/hooks/helix-context.sh`. Same wire contract — reads Claude Code's hook payload on stdin, writes the wrapped snapshot to stdout (or nothing if skipped). Use it in two places:
+`helix-mcp hook` is the Rust replacement for the shell hook script at `~/.claude/hooks/helix-context.sh`. Same wire contract — reads Claude Code's hook payload on stdin, writes the wrapped snapshot to stdout (or nothing if skipped). Use it in two places:
 
 ### UserPromptSubmit
 
@@ -101,7 +101,7 @@ Inject the snapshot at the start of every prompt (skipped when already-injected 
     "UserPromptSubmit": [
       {
         "hooks": [
-          { "type": "command", "command": "helix-claude-mcp hook", "timeout": 5 }
+          { "type": "command", "command": "helix-mcp hook", "timeout": 5 }
         ]
       }
     ]
@@ -119,7 +119,7 @@ When Claude Code compacts the context (auto or `/compact`), the previously-injec
     "PostCompact": [
       {
         "hooks": [
-          { "type": "command", "command": "helix-claude-mcp hook --reset-marker", "timeout": 5 }
+          { "type": "command", "command": "helix-mcp hook --reset-marker", "timeout": 5 }
         ]
       }
     ],
@@ -127,7 +127,7 @@ When Claude Code compacts the context (auto or `/compact`), the previously-injec
       {
         "matcher": "compact",
         "hooks": [
-          { "type": "command", "command": "helix-claude-mcp hook --reset-marker", "timeout": 5 }
+          { "type": "command", "command": "helix-mcp hook --reset-marker", "timeout": 5 }
         ]
       }
     ]
@@ -158,7 +158,7 @@ Old:
 
 New:
 ```json
-{ "type": "command", "command": "helix-claude-mcp hook", "timeout": 5 }
+{ "type": "command", "command": "helix-mcp hook", "timeout": 5 }
 ```
 
 The Rust hook is functionally a superset of the shell version: same emit format, plus proper per-session dedup (the shell version had none — it re-emitted on every prompt) and `--reset-marker` for compression.
