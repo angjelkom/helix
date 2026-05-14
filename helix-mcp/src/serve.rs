@@ -34,13 +34,20 @@ struct HelixMcpServer;
 /// prompt. Edit this when tool behavior changes.
 const SERVER_INSTRUCTIONS: &str = r#"You are paired with a running Helix editor via this MCP server. Use it to keep the user's editor in sync with your work so they can follow along visually.
 
+# Current editor state — two paths
+
+Depending on how the client is configured, you may receive the user's current editor state in one of two ways. Both surface the same data; pick whichever is available:
+
+1. **Inline injection** (Claude Code with the UserPromptSubmit hook, or any client that pre-injects context). The current snapshot appears in the user's prompt as a `<helix-editor-context>…</helix-editor-context>` block. When present, trust it as the primary source — no tool call needed.
+2. **On-demand resource read**. When the inline block is absent, or when you need to confirm state after a tool call that may have changed it (open-file, goto-line, select, run-command, format-document), read `helix://state/current` via `resources/read`.
+
+When the user says "this file" / "the file I'm editing" / "here" without naming a path, resolve it from whichever path is available rather than asking.
+
 # Resources (read these for context, no side effects)
 
-- `helix://state/current` — active buffer's path, cursor, selection, mode. Read this at the start of a conversation or whenever you need to know what file the user is currently looking at.
+- `helix://state/current` — active buffer's path, cursor, selection, mode.
 - `helix://state/buffers` — list of all open buffers.
 - `helix://state/snapshot` — the full editor snapshot (everything above plus timestamps and instance info).
-
-When the user says "this file" / "the file I'm editing" / "here" without naming a path, resolve it by reading `helix://state/current` instead of asking.
 
 # Workflow: navigate before editing
 

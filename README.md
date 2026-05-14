@@ -113,7 +113,59 @@ Tell Claude Code about the bridge. Either project-scoped (committed to the repo)
 
 …or globally in `~/.claude.json` under the same `"mcpServers"` key. Claude Code spawns the binary per session and sets `CLAUDE_PROJECT_DIR` automatically.
 
-The same binary works with any MCP-compatible coding agent — Codex CLI (`~/.codex/config.toml` under `[mcp_servers.helix]`), Cursor (`~/.cursor/mcp.json`), Cline, Continue, Zed, etc. Register `helix-mcp serve` as a stdio server in whatever format the agent expects. The bridge embeds its own operating instructions in the MCP `initialize` response, so any compliant agent automatically learns how to use the tools (navigate-before-edit workflow, when to read `helix://state/current`, insert-mode safety, etc.) without needing per-agent rules files.
+## Other agents (Codex, Cursor, Gemini)
+
+The same `helix-mcp serve` binary works with any MCP-compatible coding agent. The bridge embeds its own operating instructions in the MCP `initialize` response, so every compliant agent automatically learns the navigate-before-edit workflow, the resource URIs, and the insert-mode safety rules — no per-agent rules files needed.
+
+### Codex CLI (OpenAI)
+
+In `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.helix]
+command = "helix-mcp"
+args = ["serve"]
+```
+
+Codex CLI spawns the server with cwd set to the project root; the bridge's walk-up workspace resolution handles subdirectories too.
+
+### Cursor
+
+Global: `~/.cursor/mcp.json`. Project-scoped: `<workspace>/.cursor/mcp.json`. Same JSON shape as Claude Code:
+
+```json
+{
+  "mcpServers": {
+    "helix": {
+      "command": "helix-mcp",
+      "args": ["serve"]
+    }
+  }
+}
+```
+
+After saving, open Cursor → Settings → MCP and confirm `helix` shows up as Connected. Cursor reads the config on settings change; no restart needed.
+
+### Gemini CLI
+
+In `~/.gemini/settings.json` (global) or `<workspace>/.gemini/settings.json` (project-scoped):
+
+```json
+{
+  "mcpServers": {
+    "helix": {
+      "command": "helix-mcp",
+      "args": ["serve"]
+    }
+  }
+}
+```
+
+The exact path may vary by Gemini CLI version — check `gemini --help` or your installation's docs if the above doesn't pick up.
+
+### Other clients
+
+Any agent that supports stdio MCP servers should accept the same `command: "helix-mcp", args: ["serve"]` shape. Cline, Continue, Zed, and the various VS Code MCP extensions all follow the same convention. If your agent surfaces an MCP debug page, it should show `helix` as connected with three resources and ten tools after the server registers.
 
 ## Claude Code hooks (optional — for proactive context injection)
 
