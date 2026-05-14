@@ -8,7 +8,7 @@ use crate::UpdateSource;
 /// Producer: `helix-term::context_logger` (and, in Phase 2+, the MCP bridge
 /// via the control socket).
 /// Consumer: the Claude Code UserPromptSubmit hook (today: shell; later: a
-/// `helix-claude-mcp hook` subcommand).
+/// `helix-mcp hook` subcommand).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContextSnapshot {
     pub schema_version: u32,

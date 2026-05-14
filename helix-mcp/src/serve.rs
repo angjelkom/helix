@@ -287,7 +287,7 @@ impl ServerHandler for HelixMcpServer {
 }
 
 pub async fn run() -> Result<()> {
-    log::info!("helix-claude-mcp serve starting");
+    log::info!("helix-mcp serve starting");
 
     let transport = rmcp::transport::stdio();
     let service = rmcp::serve_server(HelixMcpServer, transport).await?;

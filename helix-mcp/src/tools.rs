@@ -1,4 +1,4 @@
-//! Tool definitions. One enum variant per MCP Tool exposed by helix-claude-mcp.
+//! Tool definitions. One enum variant per MCP Tool exposed by helix-mcp.
 //! Each variant carries its public name, description, and JSON-Schema input
 //! shape. The arg structs (HelixOpenFileArgs, etc.) live alongside for
 //! ergonomic deserialization in serve::call_tool.

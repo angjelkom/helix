@@ -49,7 +49,7 @@ The custom JSON-RPC dialect — not MCP itself — lives inside Helix. The MCP p
 │                          Claude Code                                  │
 │  ┌─────────────┐                            ┌────────────────────┐    │
 │  │ prompt flow │──UserPromptSubmit hook────▶│ context.sh OR      │    │
-│  │             │                            │ helix-claude-mcp   │    │
+│  │             │                            │ helix-mcp   │    │
 │  │             │                            │   hook             │    │
 │  │             │◀───reads .helix/context.json (passive prefetch)─│    │
 │  │             │                            │                    │    │
@@ -58,7 +58,7 @@ The custom JSON-RPC dialect — not MCP itself — lives inside Helix. The MCP p
 └─────────────────────────────────────────────────┼────────────────┘    │
                                                   │                     │
                                 ┌─────────────────▼──────────────────┐  │
-                                │ helix-claude-mcp serve             │  │
+                                │ helix-mcp serve             │  │
                                 │  (external Rust binary, stdio MCP) │  │
                                 └─────────────────┬──────────────────┘  │
                                                   │                     │
@@ -87,20 +87,20 @@ The custom JSON-RPC dialect — not MCP itself — lives inside Helix. The MCP p
                                                                          │
             ┌──────────────────────────────────────────────────────┐    │
             │       Shared crate: helix-context-schema             │────┘
-            │       (types used by both Helix and helix-claude-mcp)│
+            │       (types used by both Helix and helix-mcp)│
             └──────────────────────────────────────────────────────┘
 ```
 
 ### Components
 
-- **`helix-context-schema`** (new shared crate): the JSON snapshot types + JSON-RPC method definitions. Depended on by both `helix-term` and `helix-claude-mcp`.
+- **`helix-context-schema`** (new shared crate): the JSON snapshot types + JSON-RPC method definitions. Depended on by both `helix-term` and `helix-mcp`.
 - **Helix-side changes** (in `helix-term`):
   - Control socket: Unix-domain server at `<workspace>/.helix/control-<pid>.sock` (with macOS path-length fallback — see §5.2)
   - Editor-event channel: `EditorEvent::ControlRequest` variant carrying request + `oneshot` reply sender
   - Snapshot extension: add `last_update_source` field (always set); optional `instance` block (PID + socket_path hint, informational only)
   - Workspace fallback fix: when `find_workspace` returns `is_cwd_fallback=true`, skip writing the snapshot (don't pollute `$HOME/.helix/`)
   - No global instance registry. No startup directory scan. Discovery is project-local.
-- **`helix-claude-mcp` binary** (new repo or workspace member):
+- **`helix-mcp` binary** (new repo or workspace member):
   - `serve` subcommand: stdio MCP server, discovers Helix by globbing `$CLAUDE_PROJECT_DIR/.helix/control-*.sock` and connecting to whichever responds (§7.4)
   - `hook` subcommand: UserPromptSubmit handler with dedup logic (replaces shell hook eventually)
   - `--reset-marker` flag: for `PostCompact`/`SessionStart compact` hooks
@@ -265,7 +265,7 @@ Pure read methods (current-state, get-hover-at, get-diagnostics) do not rewrite 
 
 ## 6. JSON-RPC method surface (Helix control socket)
 
-JSON-RPC-inspired framing over a single-newline-delimited stream per connection. **Not strictly JSON-RPC 2.0** — we drop the `jsonrpc: "2.0"` envelope and the `id` field, because each connection is single-flight (one request in flight, the response immediately follows). The `method` and `params` keys on the wire, plus the matching `method`/`result` shape on responses, retain JSON-RPC's idiom. Each connection is one client (typically `helix-claude-mcp serve`).
+JSON-RPC-inspired framing over a single-newline-delimited stream per connection. **Not strictly JSON-RPC 2.0** — we drop the `jsonrpc: "2.0"` envelope and the `id` field, because each connection is single-flight (one request in flight, the response immediately follows). The `method` and `params` keys on the wire, plus the matching `method`/`result` shape on responses, retain JSON-RPC's idiom. Each connection is one client (typically `helix-mcp serve`).
 
 Field names on the wire are `snake_case` throughout, matching every other field on the protocol (including the JSON snapshot schema).
 
@@ -330,14 +330,14 @@ LSP query methods (`get-hover-at`, `get-definition-at`, `get-references-at`) opt
 
 **Note:** an earlier draft of this spec specified a "last-keystroke time < 500 ms" heuristic. That heuristic referenced a field that does not exist in `Editor`. Implementing such a heuristic would require adding an `Instant` field to `Editor` updated on every input event — non-trivial and arguably premature. Initial implementation refuses on `Mode::Insert` alone. If false positives prove problematic (e.g., user pauses in insert mode and wants hover), introduce the timestamp field as a follow-up.
 
-## 7. MCP server binary (`helix-claude-mcp`)
+## 7. MCP server binary (`helix-mcp`)
 
 ### 7.1 Crate organization
 
-A new workspace member at `helix-claude-mcp/` containing:
+A new workspace member at `helix-mcp/` containing:
 
 ```
-helix-claude-mcp/
+helix-mcp/
 ├── Cargo.toml
 ├── src/
 │   ├── main.rs        # CLI: subcommand dispatch
@@ -357,8 +357,8 @@ Dependencies:
 ### 7.2 Subcommands
 
 ```
-helix-claude-mcp serve              # stdio MCP server
-helix-claude-mcp hook [--reset-marker]
+helix-mcp serve              # stdio MCP server
+helix-mcp hook [--reset-marker]
                                     # UserPromptSubmit / PostCompact / SessionStart hook
 ```
 
@@ -368,7 +368,7 @@ The `hook` subcommand reads JSON from stdin (Claude Code's hook payload), uses `
 
 The MCP `initialize` response populates the optional `instructions` field with a tight operating manual: what the resources and tools are, the navigate-before-edit workflow, insert-mode safety rules, and how to degrade when Helix isn't running. Any compliant MCP client (Claude Code, Codex CLI, Cursor, Cline, Continue, Zed, …) feeds these instructions to the LLM as part of its system context, so every coding agent learns the same playbook automatically — no per-agent rules files needed.
 
-The instructions live in `helix-claude-mcp/src/serve.rs` as `SERVER_INSTRUCTIONS`. Treat them as part of the public contract: changing tool behavior requires updating the instructions in the same commit. The integration test `initialize_handshake_succeeds` asserts the field is present and non-empty, so a silent regression that drops the instructions block fails CI.
+The instructions live in `helix-mcp/src/serve.rs` as `SERVER_INSTRUCTIONS`. Treat them as part of the public contract: changing tool behavior requires updating the instructions in the same commit. The integration test `initialize_handshake_succeeds` asserts the field is present and non-empty, so a silent regression that drops the instructions block fails CI.
 
 ### 7.3 MCP Resources vs Tools mapping
 
@@ -462,7 +462,7 @@ Session ID is read from the hook's stdin JSON (`session_id` field — verified a
 {
   "mcpServers": {
     "helix": {
-      "command": "helix-claude-mcp",
+      "command": "helix-mcp",
       "args": ["serve"]
     }
   }
@@ -481,7 +481,7 @@ No `"type": "stdio"` field — stdio is implicit from the presence of `command`+
         "hooks": [
           {
             "type": "command",
-            "command": "helix-claude-mcp hook",
+            "command": "helix-mcp hook",
             "timeout": 5
           }
         ]
@@ -490,7 +490,7 @@ No `"type": "stdio"` field — stdio is implicit from the presence of `command`+
     "PostCompact": [
       {
         "hooks": [
-          {"type": "command", "command": "helix-claude-mcp hook --reset-marker"}
+          {"type": "command", "command": "helix-mcp hook --reset-marker"}
         ]
       }
     ],
@@ -498,7 +498,7 @@ No `"type": "stdio"` field — stdio is implicit from the presence of `command`+
       {
         "matcher": "compact",
         "hooks": [
-          {"type": "command", "command": "helix-claude-mcp hook --reset-marker"}
+          {"type": "command", "command": "helix-mcp hook --reset-marker"}
         ]
       }
     ]
@@ -508,7 +508,7 @@ No `"type": "stdio"` field — stdio is implicit from the presence of `command`+
 
 ## 9. Shared schema crate (`helix-context-schema`)
 
-Lives at `helix-context-schema/` in the workspace. Pure data types, no runtime dependencies beyond `serde` and `serde_json`. Both `helix-term` and `helix-claude-mcp` depend on it as a workspace path dep.
+Lives at `helix-context-schema/` in the workspace. Pure data types, no runtime dependencies beyond `serde` and `serde_json`. Both `helix-term` and `helix-mcp` depend on it as a workspace path dep.
 
 Public types:
 - `ContextSnapshot` (the JSON file shape, including the optional `instance` hint block)
@@ -602,7 +602,7 @@ These are intentionally listed here rather than in §10's risk register so the r
   3. Socket task awaits the future, sends result back via the originating `oneshot::Sender`.
   4. The captured future owns its parameters (document URL, position, text-encoding tag), so it's `Send + 'static` without referencing `Editor` after the await point. Verify by spot-checking `helix-lsp::Client::text_document_hover` return type during Phase 3 implementation.
 
-### Phase 4 — Build `helix-claude-mcp` binary (medium)
+### Phase 4 — Build `helix-mcp` binary (medium)
 
 - New workspace member crate
 - `rmcp`-based stdio MCP server (`serve` subcommand)
@@ -626,7 +626,7 @@ Shipped:
 
 Deferred (not shipped, not currently required — see §10b for the rationale):
 - `notifications/resources/list_changed` if Claude exhibits staleness.
-- `helix-claude-mcp doctor` subcommand for self-diagnosis (per Open Question 2).
+- `helix-mcp doctor` subcommand for self-diagnosis (per Open Question 2).
 - A `--verbose` flag on the hook with telemetry breadcrumbs.
 - `initialize` handshake on the bridge→Helix wire (matters at protocol v2).
 - Overall send/recv timeout on `rpc_client::send_request` (~30 s) to defend against a hung editor event loop.
@@ -641,7 +641,7 @@ Each phase is independently shippable. Phase 1 alone is valuable (bug fix + sche
 ## 12. Open questions
 
 1. **Should `.mcp.json` be committed to user's project repos** or kept in their dotfiles? Trade-off: committed = team gets it for free; dotfiles = user controls. Recommend committed once the binary is stable.
-2. **Should we offer a `helix-claude-mcp doctor` subcommand** that checks: binary on PATH, snapshot file present and parseable, sockets in `<workspace>/.helix/` connectable, JSON-RPC `initialize` succeeds? Useful for support.
+2. **Should we offer a `helix-mcp doctor` subcommand** that checks: binary on PATH, snapshot file present and parseable, sockets in `<workspace>/.helix/` connectable, JSON-RPC `initialize` succeeds? Useful for support.
 3. **License for the new binary** — same as Helix (MPL-2.0) or different? Probably same to keep it simple.
 4. **Whether to publish to crates.io** — not yet; keep in workspace until API stabilizes.
 5. **Notifications/resources/list_changed** — defer until we observe staleness in practice. May not be needed.

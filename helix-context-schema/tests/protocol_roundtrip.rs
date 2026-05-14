@@ -139,14 +139,14 @@ fn initialize_request_serializes_with_method_tag() {
     let req = ControlRequest::Initialize {
         protocol_version: PROTOCOL_VERSION.into(),
         client_info: ClientInfo {
-            name: "helix-claude-mcp".into(),
+            name: "helix-mcp".into(),
             version: "0.1.0".into(),
         },
     };
     let j = serde_json::to_value(&req).unwrap();
     assert_eq!(j["method"], "initialize");
     assert_eq!(j["params"]["protocol_version"], "1.0");
-    assert_eq!(j["params"]["client_info"]["name"], "helix-claude-mcp");
+    assert_eq!(j["params"]["client_info"]["name"], "helix-mcp");
 }
 
 #[test]
@@ -192,10 +192,17 @@ fn initialize_response_round_trips() {
 
 #[test]
 fn open_file_request_serializes_with_path() {
-    let req = ControlRequest::OpenFile { path: "src/main.rs".into() };
+    let req = ControlRequest::OpenFile {
+        path: "src/main.rs".into(),
+        line: None,
+        column: None,
+    };
     let j = serde_json::to_value(&req).unwrap();
     assert_eq!(j["method"], "open-file");
     assert_eq!(j["params"]["path"], "src/main.rs");
+    // Optional fields serialize as absent when None.
+    assert!(j["params"].get("line").is_none());
+    assert!(j["params"].get("column").is_none());
 }
 
 #[test]
@@ -205,10 +212,27 @@ fn open_file_request_round_trips() {
         "params": { "path": "src/lib.rs" }
     });
     let req: ControlRequest = serde_json::from_value(json).unwrap();
-    let ControlRequest::OpenFile { path } = req else {
+    let ControlRequest::OpenFile { path, line, column } = req else {
         panic!("wrong variant");
     };
     assert_eq!(path, "src/lib.rs");
+    assert!(line.is_none());
+    assert!(column.is_none());
+}
+
+#[test]
+fn open_file_request_with_line_column_round_trips() {
+    let json = serde_json::json!({
+        "method": "open-file",
+        "params": { "path": "src/main.rs", "line": 42, "column": 5 }
+    });
+    let req: ControlRequest = serde_json::from_value(json).unwrap();
+    let ControlRequest::OpenFile { path, line, column } = req else {
+        panic!("wrong variant");
+    };
+    assert_eq!(path, "src/main.rs");
+    assert_eq!(line, Some(42));
+    assert_eq!(column, Some(5));
 }
 
 #[test]
