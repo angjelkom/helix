@@ -102,6 +102,21 @@ async fn initialize_handshake_succeeds() {
         "missing serverInfo: {}",
         line,
     );
+    // The instructions field is what teaches every connecting agent how to
+    // use the bridge — a regression that drops it would silently break the
+    // navigate-before-edit workflow across all clients, so assert on both
+    // the field's presence and a content marker that proves we emitted
+    // ours (not an empty/default string).
+    assert!(
+        line.contains("\"instructions\""),
+        "missing instructions in initialize response: {}",
+        line,
+    );
+    assert!(
+        line.contains("navigate before editing"),
+        "instructions appear empty or unrelated to our content: {}",
+        line,
+    );
 
     // Tear down
     drop(stdin);
