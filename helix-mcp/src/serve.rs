@@ -314,6 +314,7 @@ use helix_context_schema::{ControlRequest, ControlResponse};
 /// tool-result type.
 async fn dispatch_tool(request: ControlRequest) -> CallToolResult {
     use crate::{discovery, rpc_client};
+    use rpc_client::{HandshakeOutcome, RpcError};
 
     let socket = match discovery::find_helix_socket(None).await {
         Ok(s) => s,
@@ -326,6 +327,30 @@ async fn dispatch_tool(request: ControlRequest) -> CallToolResult {
         }
     };
 
+    // Per-process handshake: cached after first success; transport errors
+    // below invalidate so the next call re-handshakes (covers Helix
+    // restart with a potentially-different protocol_version).
+    match rpc_client::ensure_handshake(&socket).await {
+        Ok(HandshakeOutcome::Ok { .. }) => {}
+        Ok(HandshakeOutcome::Incompatible {
+            helix_protocol,
+            bridge_protocol,
+        }) => {
+            return tool_error(format!(
+                "Helix protocol_version {} is incompatible with bridge {}. \
+                 Upgrade whichever is older so both sides agree on the major version.",
+                helix_protocol, bridge_protocol,
+            ));
+        }
+        Err(e) => {
+            rpc_client::invalidate_handshake_cache().await;
+            return tool_error(format!(
+                "Handshake with Helix failed: {}. The next tool call will retry.",
+                e
+            ));
+        }
+    }
+
     match rpc_client::send_request_with_timeout(
         &socket,
         &request,
@@ -334,12 +359,18 @@ async fn dispatch_tool(request: ControlRequest) -> CallToolResult {
     .await
     {
         Ok(resp) => format_response_as_tool_result(resp),
-        Err(rpc_client::RpcError::HelixError(je)) => tool_error(format!(
+        Err(RpcError::HelixError(je)) => tool_error(format!(
             "Helix rejected the request: {} (code {})",
             je.message,
             je.code as i32,
         )),
-        Err(e) => tool_error(format!("Failed to communicate with Helix: {}", e)),
+        Err(e) => {
+            // Transport-level error — Helix may have restarted. Drop the
+            // cached handshake so the next call re-handshakes against
+            // whatever's listening now.
+            rpc_client::invalidate_handshake_cache().await;
+            tool_error(format!("Failed to communicate with Helix: {}", e))
+        }
     }
 }
 
