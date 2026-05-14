@@ -23,6 +23,58 @@ use crate::tools::ToolKind;
 
 struct HelixMcpServer;
 
+/// Returned in `InitializeResult.instructions`. MCP clients feed this to
+/// the LLM as part of its system context on every session that loads
+/// this server, so every coding agent (Claude Code, Codex, Cursor,
+/// Cline, Continue, Zed, …) gets the same operating manual without
+/// needing per-agent rules files.
+///
+/// Keep it tight: enough that the model knows what's available and the
+/// right workflow, short enough that it doesn't dominate the system
+/// prompt. Edit this when tool behavior changes.
+const SERVER_INSTRUCTIONS: &str = r#"You are paired with a running Helix editor via this MCP server. Use it to keep the user's editor in sync with your work so they can follow along visually.
+
+# Resources (read these for context, no side effects)
+
+- `helix://state/current` — active buffer's path, cursor, selection, mode. Read this at the start of a conversation or whenever you need to know what file the user is currently looking at.
+- `helix://state/buffers` — list of all open buffers.
+- `helix://state/snapshot` — the full editor snapshot (everything above plus timestamps and instance info).
+
+When the user says "this file" / "the file I'm editing" / "here" without naming a path, resolve it by reading `helix://state/current` instead of asking.
+
+# Workflow: navigate before editing
+
+Before calling Edit / Write on a file, navigate Helix to the change site so the user sees where the edit will land:
+
+- Single-point edit (one-line change, insertion): call `helix_open_file` with `path`, `line`, and `column` set to where the edit will start. The view recenters on the target.
+- Multi-line range replacement: call `helix_open_file` with the start line, then `helix_select` with the exact `(start_line, start_column, end_line, end_column)` range being replaced. The highlighted selection shows the user the about-to-change region.
+- New file (Write to a nonexistent path): skip the pre-navigation, then call `helix_open_file` with the new path after the write so the file lands in Helix.
+
+After the edit, call `helix_goto_line` (or `helix_open_file` with the new line) so the cursor stays on the change for follow-up.
+
+Skip navigation only when: the file is outside the workspace, the bridge is down (a tool call returned "Helix is not running in this workspace" — don't retry), or the work is purely terminal-side.
+
+# Tools
+
+- `helix_open_file(path, line?, column?)` — open and optionally jump-and-center. Path may be absolute or workspace-relative.
+- `helix_goto_line(line, column?, path?)` — move cursor; view recenters on the line.
+- `helix_select(start_line, start_column, end_line, end_column, path?)` — select a range; view recenters on the head. 1-indexed inclusive.
+- `helix_get_diagnostics(path?)` — LSP diagnostics for a buffer. Cheaper than running a separate type-check command.
+- `helix_get_hover(line, column, path?)` — LSP hover info.
+- `helix_get_definition(line, column, path?)` — LSP goto-definition.
+- `helix_get_references(line, column, path?, include_declaration?)` — LSP find-references.
+- `helix_get_workspace_symbols(query)` — LSP fuzzy symbol search across the workspace. Prefer this over grep when you want a symbol, not a string.
+- `helix_format_document(path?)` — kick off the LSP formatter. Returns `applied: true` immediately; the edits arrive asynchronously via the LSP.
+- `helix_run_command(name, args)` — execute any Helix typable command (without the leading colon). POWERFUL — can write files, run shell commands, quit the editor. Use only for things the user has explicitly asked for, e.g. `{name: "write"}` to save or `{name: "reload"}` to reload from disk.
+
+# Insert-mode safety
+
+`helix_get_hover` / `helix_get_definition` / `helix_get_references` refuse with error code -32003 (`BufferModeUnsafe`) when the editor is in Insert mode — querying mid-typing positions returns garbage. If you specifically need to override (rare), pass `allow_insert_mode: true`.
+
+# Error handling
+
+Tool errors include a structured message and an error code. "Helix is not running in this workspace" means the user doesn't have Helix open here — degrade gracefully and don't keep calling Helix tools that session. Resources still work when Helix is closed, serving the last-written snapshot from disk."#;
+
 impl ServerHandler for HelixMcpServer {
     fn get_info(&self) -> ServerInfo {
         InitializeResult::new(
@@ -35,6 +87,7 @@ impl ServerHandler for HelixMcpServer {
             env!("CARGO_PKG_NAME"),
             env!("CARGO_PKG_VERSION"),
         ))
+        .with_instructions(SERVER_INSTRUCTIONS)
     }
 
     async fn list_resources(

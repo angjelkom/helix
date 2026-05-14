@@ -73,6 +73,10 @@ Phase 4b shipped these tools. Claude Code can call any of them via MCP `tools/ca
 
 All tools require Helix to be running with `[editor.control-socket] enabled = true`. When Helix isn't running, tools return a clear "not running" error message.
 
+## Vendor-neutral agent onboarding
+
+The bridge populates the MCP `initialize` response's `instructions` field with a tight operating manual covering the resources, tools, and the navigate-before-edit workflow. Compliant MCP clients feed these instructions to the LLM as system context, so every agent (Claude Code, Codex CLI, Cursor, Cline, Continue, Zed, …) gets the same playbook automatically — no per-agent rules files required. The text lives in `src/serve.rs` as `SERVER_INSTRUCTIONS`; update it in the same commit when tool behavior changes.
+
 ## How it works
 
 - **Resources** read from the snapshot file `<workspace>/.helix/context.json` — fast, no Helix process required (returns a friendly error if the snapshot is missing).
