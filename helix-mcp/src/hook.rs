@@ -221,7 +221,12 @@ pub fn decide(input: &HookInput) -> HookDecision {
     }
 }
 
-pub async fn run(reset_marker: bool, verbose: bool) -> Result<()> {
+/// Synchronous entry point for the hook subcommand. The body uses only
+/// `std::fs` and `std::io::stdin`/`stdout` — no tokio primitives — so a
+/// tokio runtime would be pure startup overhead (~0.5–1 ms per
+/// invocation, paid on every UserPromptSubmit). main() runs this on
+/// the main thread without a runtime; see helix-mcp/src/main.rs.
+pub fn run(reset_marker: bool, verbose: bool) -> Result<()> {
     // Parse stdin. If parsing fails, exit 0 silently — the hook is best-
     // effort and should never fail the user's prompt.
     let input = match HookInput::parse(io::stdin()) {

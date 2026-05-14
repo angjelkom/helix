@@ -58,8 +58,7 @@ enum Command {
     Doctor,
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+fn main() -> anyhow::Result<()> {
     env_logger::Builder::from_env(
         env_logger::Env::default().default_filter_or("info"),
     )
@@ -68,13 +67,21 @@ async fn main() -> anyhow::Result<()> {
 
     let cli = Cli::parse();
     match cli.command {
-        Command::Serve => {
-            serve::run().await?;
-            Ok(())
-        }
-        Command::Hook { reset_marker, verbose } => {
-            hook::run(reset_marker, verbose).await
-        }
-        Command::Doctor => doctor::run().await,
+        // The hook subcommand is pure stdio + std::fs — zero await points.
+        // Building a tokio runtime for it would cost ~0.5–1 ms of process
+        // startup per UserPromptSubmit (worker-thread pool, io driver) for
+        // no benefit. Run it synchronously on the main thread.
+        Command::Hook { reset_marker, verbose } => hook::run(reset_marker, verbose),
+        // serve and doctor speak async (rmcp stdio transport, tokio Unix
+        // sockets for the bridge → Helix RPC). Build a runtime for them.
+        Command::Serve => tokio_runtime()?.block_on(serve::run()),
+        Command::Doctor => tokio_runtime()?.block_on(doctor::run()),
     }
+}
+
+fn tokio_runtime() -> anyhow::Result<tokio::runtime::Runtime> {
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .map_err(anyhow::Error::from)
 }
