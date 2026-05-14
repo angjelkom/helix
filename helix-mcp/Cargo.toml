@@ -26,6 +26,7 @@ log = "0.4"
 env_logger = "0.11"
 rmcp = { version = "1.6", features = ["server", "transport-io"] }
 thiserror = { workspace = true }
+which = "6"
 
 [dev-dependencies]
 tempfile = { workspace = true }
