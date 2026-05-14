@@ -4,12 +4,20 @@
 //! needed).
 
 use std::path::Path;
+use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 
 use helix_context_schema::{ControlRequest, ControlResponse, JsonRpcError};
 
 const RECV_BUF_INITIAL: usize = 4096;
+
+/// Default overall timeout for a bridge → Helix RPC. Discovery has its
+/// own 200 ms connect deadline; once connected, write+read have to land
+/// within this window. 30 s is well past any LSP timeout (10 s on the
+/// Helix side) so a stuck editor event loop — not a slow LSP — is what
+/// trips it.
+pub const DEFAULT_RPC_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, thiserror::Error)]
 pub enum RpcError {
@@ -25,6 +33,8 @@ pub enum RpcError {
     Parse(serde_json::Error),
     #[error("helix returned an error: {message} (code {code})", code = .0.code as i32, message = .0.message)]
     HelixError(JsonRpcError),
+    #[error("timed out after {0:?} waiting for Helix to respond")]
+    Timeout(Duration),
 }
 
 /// Connect to `socket_path`, send `request`, read one line of response,
@@ -59,6 +69,21 @@ pub async fn send_request(
     let err: JsonRpcError = serde_json::from_str(line.trim())
         .map_err(RpcError::Parse)?;
     Err(RpcError::HelixError(err))
+}
+
+/// Same as `send_request` but bounded by `timeout`. Returns
+/// `RpcError::Timeout` if the connect+write+read sequence doesn't
+/// complete in time. Use this instead of `send_request` for any
+/// production call where a hung Helix event loop is a possibility.
+pub async fn send_request_with_timeout(
+    socket_path: &Path,
+    request: &ControlRequest,
+    timeout: Duration,
+) -> Result<ControlResponse, RpcError> {
+    match tokio::time::timeout(timeout, send_request(socket_path, request)).await {
+        Ok(r) => r,
+        Err(_) => Err(RpcError::Timeout(timeout)),
+    }
 }
 
 #[cfg(test)]
@@ -134,5 +159,48 @@ mod tests {
         };
         let err = send_request(&nonexistent, &req).await.unwrap_err();
         assert!(matches!(err, RpcError::Connect(_, _)), "got: {:?}", err);
+    }
+
+    #[tokio::test]
+    async fn send_request_with_timeout_returns_timeout_when_helix_never_responds() {
+        // Bind a listener but never write a response. send_request_with_timeout
+        // should trip on its own deadline rather than waiting indefinitely.
+        let tmp = TempDir::new().unwrap();
+        let sock = tmp.path().join("hanging.sock");
+        let listener = UnixListener::bind(&sock).unwrap();
+        // Accept the connection and keep the stream alive without writing.
+        // The `accept_task` is aborted at the end of the test.
+        let accept_task = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            // Drain stdin so the bridge's write_all doesn't get backpressured
+            // off the kernel send buffer, then sleep indefinitely.
+            use tokio::io::AsyncReadExt;
+            let mut buf = vec![0u8; 4096];
+            let _ = stream.read(&mut buf).await;
+            tokio::time::sleep(Duration::from_secs(60)).await;
+        });
+
+        let req = ControlRequest::Initialize {
+            protocol_version: PROTOCOL_VERSION.into(),
+            client_info: ClientInfo { name: "t".into(), version: "0.1".into() },
+        };
+        let start = std::time::Instant::now();
+        let result = send_request_with_timeout(
+            &sock,
+            &req,
+            Duration::from_millis(300),
+        )
+        .await;
+        let elapsed = start.elapsed();
+
+        accept_task.abort();
+        assert!(matches!(result, Err(RpcError::Timeout(_))), "got: {:?}", result);
+        // Soft upper bound — should fire within a comfortable margin of the
+        // 300ms deadline, not creep up toward the 60s sleep.
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "timeout took too long: {:?}",
+            elapsed
+        );
     }
 }

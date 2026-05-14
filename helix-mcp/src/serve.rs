@@ -326,7 +326,13 @@ async fn dispatch_tool(request: ControlRequest) -> CallToolResult {
         }
     };
 
-    match rpc_client::send_request(&socket, &request).await {
+    match rpc_client::send_request_with_timeout(
+        &socket,
+        &request,
+        rpc_client::DEFAULT_RPC_TIMEOUT,
+    )
+    .await
+    {
         Ok(resp) => format_response_as_tool_result(resp),
         Err(rpc_client::RpcError::HelixError(je)) => tool_error(format!(
             "Helix rejected the request: {} (code {})",
