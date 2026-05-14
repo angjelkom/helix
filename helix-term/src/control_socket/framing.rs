@@ -12,14 +12,12 @@ const MAX_FRAME_BYTES: usize = 1024 * 1024; // 1 MiB
 
 pub struct FrameReader {
     inner: BufReader<OwnedReadHalf>,
-    buf: String,
 }
 
 impl FrameReader {
     pub fn new(half: OwnedReadHalf) -> Self {
         Self {
             inner: BufReader::new(half),
-            buf: String::new(),
         }
     }
 
@@ -31,7 +29,6 @@ impl FrameReader {
     /// streams gigabytes without a newline cannot force unbounded buffer
     /// growth.
     pub async fn read_request(&mut self) -> io::Result<Option<ControlRequest>> {
-        self.buf.clear();
         let mut bytes = Vec::with_capacity(256);
         loop {
             let chunk = self.inner.fill_buf().await?;
