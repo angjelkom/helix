@@ -40,7 +40,13 @@ pub enum RpcError {
 
 /// Connect to `socket_path`, send `request`, read one line of response,
 /// parse it as either a successful `ControlResponse` or a `JsonRpcError`.
-pub async fn send_request(
+///
+/// **Private to this module.** Phase 6b made `send_request_with_timeout`
+/// mandatory in production — every production path now sets a deadline.
+/// Tests in the same module still call this directly. If a future
+/// caller genuinely wants "no timeout", pass `Duration::MAX` to the
+/// public wrapper rather than reaching for this version.
+async fn send_request(
     socket_path: &Path,
     request: &ControlRequest,
 ) -> Result<ControlResponse, RpcError> {
@@ -110,15 +116,18 @@ pub async fn send_request_with_timeout(
 // round-trip per call without staleness concerns in normal use. The
 // invalidate-on-error path covers the rare cross-restart case.
 
-/// Captured fields are not all read by every caller (dispatch_tool only
-/// matches on the variant; future diagnostics will display the version
-/// strings). Marked allow(dead_code) to keep the cache shape stable
-/// regardless of who's reading.
+/// Outcome of `ensure_handshake`. `Incompatible`'s fields are read by
+/// `dispatch_tool` to compose the user-facing error message. `Ok`'s
+/// fields are not currently consumed — they're captured here so a
+/// future `serve --verbose` (Phase 7c §6.3) can log them on the first
+/// successful handshake. The field-level `allow(dead_code)` keeps the
+/// lint scoped: any *new* unused field on either variant gets flagged.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub enum HandshakeOutcome {
     Ok {
+        #[allow(dead_code)]
         helix_version: String,
+        #[allow(dead_code)]
         protocol_version: String,
     },
     Incompatible {
@@ -326,11 +335,11 @@ mod tests {
     // ----- Handshake tests --------------------------------------------------
     //
     // These tests share the process-global HANDSHAKE_CACHE. They serialize
-    // against each other via HANDSHAKE_TEST_LOCK so an invalidation in one
+    // against each other via HANDSHAKE_CACHE_LOCK so an invalidation in one
     // test doesn't race against a populate in another. Each test also
     // invalidates the cache on entry to start from a known state.
 
-    static HANDSHAKE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    static HANDSHAKE_CACHE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     /// Same as spawn_fake_helix but the fake recognizes `initialize` and
     /// returns a valid response; anything else gets `canned`. Mirrors the
@@ -370,7 +379,7 @@ mod tests {
 
     #[tokio::test]
     async fn ensure_handshake_caches_outcome_after_first_call() {
-        let _lock = HANDSHAKE_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _lock = HANDSHAKE_CACHE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         invalidate_handshake_cache().await;
 
         let tmp = TempDir::new().unwrap();
@@ -393,7 +402,7 @@ mod tests {
 
     #[tokio::test]
     async fn invalidate_handshake_cache_forces_re_handshake() {
-        let _lock = HANDSHAKE_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _lock = HANDSHAKE_CACHE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         invalidate_handshake_cache().await;
 
         let tmp = TempDir::new().unwrap();
@@ -418,7 +427,7 @@ mod tests {
 
     #[tokio::test]
     async fn ensure_handshake_does_not_cache_on_transport_error() {
-        let _lock = HANDSHAKE_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _lock = HANDSHAKE_CACHE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         invalidate_handshake_cache().await;
 
         let tmp = TempDir::new().unwrap();
