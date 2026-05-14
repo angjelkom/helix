@@ -556,6 +556,8 @@ The MCP server's defensive principle: **prefer returning a structured MCP error 
 | Frame reader OOM via no-newline stream | Minor | `FrameReader` enforces `MAX_FRAME_BYTES = 1 MiB` *before* extending its buffer, via an explicit fill_buf/consume loop — no `read_line`/`take` adapter, so unbounded buffering is impossible. |
 | Marker directory created world-readable | Minor | Hook writes the marker dir with `DirBuilder::mode(0o700)` on unix so the 0o755 umask window doesn't expose it; belt-and-suspenders `set_permissions(0o700)` still runs for pre-existing dirs. |
 | Snapshot text breaks `<helix-editor-context>` fence | Minor | `emit_wrapped_snapshot` scans the body for the literal closing tag and skips emission (log warn, exit 0) when found. The hook is best-effort so a skipped emission costs the user nothing — the prompt proceeds without an inlined snapshot. Pure helper `snapshot_body_is_safe_to_wrap` is unit-tested. |
+| Bridge → Helix RPC hangs on a stuck editor | Minor | `send_request_with_timeout` wraps every tool RPC in a 30 s deadline (`DEFAULT_RPC_TIMEOUT`). Cache invalidates on transport errors so a Helix restart auto-recovers on the next call. |
+| Protocol drift between bridge and Helix | Minor | Bridge sends `initialize` on first tool call and caches the outcome per process; major-version mismatch returns `HandshakeOutcome::Incompatible` and dispatch_tool surfaces a friendly upgrade message instead of a parse failure. |
 
 ## 10b. Known limitations / accepted residual risk
 
@@ -563,7 +565,6 @@ These are real-but-bounded concerns surfaced in the post-Phase-6 audit that we a
 
 - **`helix_run_command` allows `:write` (and similar recoverable mutations).** Force-quits and shell-execs are denied (`is_destructive_typable_command` in `application.rs`); `:write`, `:reload`, `:format`, `:theme`, `:set`, etc. remain reachable. `:write` to an unintended path could overwrite a file, but the result is recoverable via the user's VCS or undo — unlike the denied commands. Users who explicitly want unrestricted access can set `HELIX_CONTROL_SOCKET_ALLOW_DESTRUCTIVE=1` before starting Helix.
 - **`helix_open_file` accepts absolute paths.** No canonicalize-and-prefix-check. Opening `/etc/shadow` is permitted at the protocol layer; the resulting buffer's contents flow back into the snapshot. Same trust assumption as above. A future hardening pass could add a workspace-confinement option.
-- **No `initialize` handshake on the bridge → Helix wire.** §6.1 specifies a handshake with version negotiation, but the bridge currently sends tool requests directly. As long as the protocol stays at v1 across both sides (today's reality) this is invisible; a future v2 bump on either side would surface confusing parse errors instead of a clean version-mismatch refusal. Adding the handshake (one round-trip per process, cached) is the obvious Phase 6b follow-up.
 - **No overall timeout on bridge→Helix RPC.** Discovery has a 200 ms connect timeout, but once connected, `write_all`/`read_line` run indefinitely. If Helix's event loop hangs (e.g., a Steel hook blocking the main thread), the MCP tool call hangs with it. A future hardening pass could wrap `send_request` in `tokio::time::timeout(30s)` and map elapsed to an MCP error. Today Claude Code's own per-tool timeout limits the blast radius.
 - **`FormatDocument` reports `applied: true` before the LSP edits actually arrive.** This is documented in the tool description ("Returns applied: true when the format was kicked off; the actual edits arrive asynchronously"). Clients waiting on the actual diff need to re-read the buffer or poll. A future enhancement could surface a request id and a follow-up `notifications/format_completed`.
 
@@ -628,9 +629,6 @@ Deferred (not shipped, not currently required — see §10b for the rationale):
 - `notifications/resources/list_changed` if Claude exhibits staleness.
 - `helix-mcp doctor` subcommand for self-diagnosis (per Open Question 2).
 - A `--verbose` flag on the hook with telemetry breadcrumbs.
-- `initialize` handshake on the bridge→Helix wire (matters at protocol v2).
-- Overall send/recv timeout on `rpc_client::send_request` (~30 s) to defend against a hung editor event loop.
-- Workspace-confinement check on `helix_open_file` (currently accepts absolute paths).
 
 The deferred items can land as a Phase 6b polish round once the rest of the bridge has bedded in.
 

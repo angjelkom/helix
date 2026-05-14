@@ -14,6 +14,13 @@ use tokio::process::Command;
 /// until the task is dropped. The first connect may be from discovery's
 /// liveness probe (which just connects + drops); subsequent ones carry the
 /// real RPC request. Returns the listener-bound socket path.
+/// A valid `initialize` response that the fake-helix returns on the
+/// bridge's first call. The bridge now sends `initialize` before any
+/// tool RPC and caches the outcome per-process; tests that don't
+/// special-case `initialize` would hang or fail with handshake errors.
+const FAKE_INITIALIZE_RESPONSE: &str = r#"{"method":"initialize","result":{"protocol_version":"1.0","helix_version":"test","server_info":{"name":"fake","version":"0.1"},"capabilities":{"read_methods":[],"write_methods":[]}}}
+"#;
+
 async fn spawn_fake_helix_in(
     workspace: &std::path::Path,
     canned_response_line: String,
@@ -26,11 +33,23 @@ async fn spawn_fake_helix_in(
         loop {
             match listener.accept().await {
                 Ok((mut stream, _)) => {
-                    let resp = canned_response_line.clone();
+                    let canned = canned_response_line.clone();
                     tokio::spawn(async move {
                         use tokio::io::AsyncReadExt;
                         let mut buf = vec![0u8; 8192];
-                        let _ = stream.read(&mut buf).await;
+                        let n = stream.read(&mut buf).await.unwrap_or(0);
+                        // Sniff the incoming request: the bridge's first
+                        // call per process is `initialize`, the rest are
+                        // tool RPCs. Respond with a valid Initialize
+                        // result on the handshake and the canned line on
+                        // every other connection.
+                        let req_text =
+                            std::str::from_utf8(&buf[..n]).unwrap_or("");
+                        let resp = if req_text.contains("\"method\":\"initialize\"") {
+                            FAKE_INITIALIZE_RESPONSE.to_string()
+                        } else {
+                            canned
+                        };
                         let _ = stream.write_all(resp.as_bytes()).await;
                         let _ = stream.flush().await;
                     });
