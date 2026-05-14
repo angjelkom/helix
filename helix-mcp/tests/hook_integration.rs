@@ -39,10 +39,23 @@ async fn run_hook(
     stdin_payload: &str,
     reset_marker: bool,
 ) -> (String, String, i32) {
+    run_hook_with_args(workspace, xdg, stdin_payload, reset_marker, false).await
+}
+
+async fn run_hook_with_args(
+    workspace: &std::path::Path,
+    xdg: &std::path::Path,
+    stdin_payload: &str,
+    reset_marker: bool,
+    verbose: bool,
+) -> (String, String, i32) {
     let mut cmd = Command::new(binary_path());
     cmd.arg("hook");
     if reset_marker {
         cmd.arg("--reset-marker");
+    }
+    if verbose {
+        cmd.arg("--verbose");
     }
     let output = cmd
         .env("CLAUDE_PROJECT_DIR", workspace)
@@ -185,4 +198,53 @@ async fn silent_on_malformed_stdin() {
     ).await;
     assert_eq!(code, 0, "must exit 0 even on bad input");
     assert!(stdout.is_empty());
+}
+
+#[tokio::test]
+async fn verbose_flag_emits_decision_breadcrumb_on_stderr() {
+    let workspace = TempDir::new().unwrap();
+    let helix = workspace.path().join(".helix");
+    std::fs::create_dir(&helix).unwrap();
+    std::fs::write(helix.join("context.json"), SAMPLE_SNAPSHOT_FOCUS_LOST).unwrap();
+    let xdg = TempDir::new().unwrap();
+
+    let payload = format!(
+        r#"{{"session_id":"verbose-probe-001","cwd":"{}"}}"#,
+        workspace.path().display()
+    );
+    let (stdout, stderr, code) =
+        run_hook_with_args(workspace.path(), xdg.path(), &payload, false, true).await;
+
+    assert_eq!(code, 0);
+    // Without --verbose this would be silent; with --verbose we get a
+    // breadcrumb on stderr describing the decision the hook reached.
+    assert!(
+        stderr.contains("decision="),
+        "expected stderr to contain a verbose decision breadcrumb; got: {:?}",
+        stderr
+    );
+    // The actual emit still happens on stdout — verbose doesn't change
+    // emission behavior, only diagnostics.
+    assert!(stdout.contains("<helix-editor-context"), "expected stdout to contain emitted snapshot block; got: {:?}", stdout);
+}
+
+#[tokio::test]
+async fn verbose_flag_off_by_default_keeps_stderr_clean() {
+    let workspace = TempDir::new().unwrap();
+    let helix = workspace.path().join(".helix");
+    std::fs::create_dir(&helix).unwrap();
+    std::fs::write(helix.join("context.json"), SAMPLE_SNAPSHOT_FOCUS_LOST).unwrap();
+    let xdg = TempDir::new().unwrap();
+
+    let payload = format!(
+        r#"{{"session_id":"verbose-off-001","cwd":"{}"}}"#,
+        workspace.path().display()
+    );
+    let (_, stderr, code) = run_hook(workspace.path(), xdg.path(), &payload, false).await;
+    assert_eq!(code, 0);
+    assert!(
+        !stderr.contains("decision="),
+        "non-verbose run leaked a breadcrumb: {:?}",
+        stderr
+    );
 }

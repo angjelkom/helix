@@ -42,6 +42,13 @@ enum Command {
         /// Clear the per-session marker file (use after context compaction)
         #[arg(long)]
         reset_marker: bool,
+        /// Emit decision breadcrumbs on stderr (parsed input, decision,
+        /// emit/marker failures). Diagnostic only — does not change
+        /// emission behavior. Without this flag, only WARN/ERROR logs
+        /// reach stderr, so debugging "why didn't my snapshot inject"
+        /// would otherwise require `RUST_LOG=debug` on the hook entry.
+        #[arg(long)]
+        verbose: bool,
     },
 }
 
@@ -59,8 +66,8 @@ async fn main() -> anyhow::Result<()> {
             serve::run().await?;
             Ok(())
         }
-        Command::Hook { reset_marker } => {
-            hook::run(reset_marker).await
+        Command::Hook { reset_marker, verbose } => {
+            hook::run(reset_marker, verbose).await
         }
     }
 }
