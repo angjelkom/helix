@@ -76,7 +76,15 @@ pub fn write_context_file(
     {
         let mut f = std::fs::File::create(&tmp)?;
         f.write_all(&payload)?;
-        f.sync_all()?;
+        // Deliberately no fsync. The snapshot is a non-durable cache —
+        // readers degrade gracefully when it's missing and the next
+        // focus-loss or MCP mutation regenerates it. POSIX rename(2)
+        // gives readers atomic all-or-nothing visibility; sync_all
+        // would only add value across a power loss, which is exactly
+        // the case the snapshot doesn't need to survive. Removing the
+        // fsync saves ~0.5–5 ms per write on most filesystems and is
+        // dominant cost on a sequence of MCP mutations like
+        // open-file → goto-line → select.
     }
     std::fs::rename(&tmp, &target)?;
     Ok(true)
