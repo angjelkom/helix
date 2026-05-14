@@ -204,28 +204,58 @@ pub fn decide(input: &HookInput) -> HookDecision {
     }
 }
 
-pub async fn run(reset_marker: bool) -> Result<()> {
+pub async fn run(reset_marker: bool, verbose: bool) -> Result<()> {
     // Parse stdin. If parsing fails, exit 0 silently — the hook is best-
     // effort and should never fail the user's prompt.
     let input = match HookInput::parse(io::stdin()) {
         Ok(i) => i,
         Err(e) => {
+            if verbose {
+                eprintln!("helix-mcp hook: stdin parse failed: {}", e);
+            }
             log::warn!("hook: stdin parse failed: {}", e);
             return Ok(());
         }
     };
+    if verbose {
+        eprintln!(
+            "helix-mcp hook: input session_id={} cwd={}",
+            input.session_id, input.cwd
+        );
+    }
 
     if reset_marker {
         let marker_p = marker_path(&input.session_id);
         match std::fs::remove_file(&marker_p) {
-            Ok(()) => log::debug!("hook: cleared marker {}", marker_p.display()),
-            Err(e) if e.kind() == io::ErrorKind::NotFound => {} // ok, nothing to clear
-            Err(e) => log::warn!("hook: clearing marker failed: {}", e),
+            Ok(()) => {
+                if verbose {
+                    eprintln!("helix-mcp hook: cleared marker {}", marker_p.display());
+                }
+                log::debug!("hook: cleared marker {}", marker_p.display());
+            }
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                if verbose {
+                    eprintln!(
+                        "helix-mcp hook: marker {} already absent",
+                        marker_p.display()
+                    );
+                }
+            }
+            Err(e) => {
+                if verbose {
+                    eprintln!("helix-mcp hook: clearing marker failed: {}", e);
+                }
+                log::warn!("hook: clearing marker failed: {}", e);
+            }
         }
         return Ok(());
     }
 
-    match decide(&input) {
+    let decision = decide(&input);
+    if verbose {
+        eprintln!("helix-mcp hook: decision={:?}", decision);
+    }
+    match decision {
         HookDecision::Skip(reason) => {
             log::debug!("hook: skip ({})", reason);
             Ok(())
@@ -235,6 +265,9 @@ pub async fn run(reset_marker: bool) -> Result<()> {
             // prompt." Emit failures (snapshot deleted between decide+emit,
             // stdout closed mid-write) must not bubble up to a non-zero exit.
             if let Err(e) = emit_wrapped_snapshot(&snapshot_path) {
+                if verbose {
+                    eprintln!("helix-mcp hook: emit failed: {}", e);
+                }
                 log::warn!("hook: emitting snapshot failed: {}", e);
                 return Ok(());
             }
@@ -242,7 +275,16 @@ pub async fn run(reset_marker: bool) -> Result<()> {
             // suppress the actually-needed inject next time.
             let marker_p = marker_path(&input.session_id);
             if let Err(e) = write_marker_mtime(&marker_p, snapshot_mtime) {
+                if verbose {
+                    eprintln!("helix-mcp hook: marker write failed: {}", e);
+                }
                 log::warn!("hook: writing marker failed: {}", e);
+            } else if verbose {
+                eprintln!(
+                    "helix-mcp hook: wrote marker {} mtime={}",
+                    marker_p.display(),
+                    snapshot_mtime
+                );
             }
             Ok(())
         }
