@@ -177,6 +177,112 @@ fn resolve_buffer<'a>(
     }
 }
 
+/// Typable commands that the control socket's `run-command` path will
+/// refuse by default. The list is intentionally narrow — only commands
+/// whose damage can't be undone via normal editing:
+///
+/// - force-quits (`quit!`, `q!`, `quit-all!`, `qa!`) discard unsaved work
+/// - shell-exec commands (`run-shell-command`, `sh`, `bang`, `!`, `pipe`,
+///   `pipe-to`) let arbitrary shell run through the editor, which doesn't
+///   add capability (the user has their own terminal) but adds a
+///   prompt-injection surface.
+///
+/// Everything else — including `:write`, `:reload`, `:format`, `:theme`,
+/// `:set` — remains available. The user's editor is theirs to drive;
+/// we protect them from accidental Claude actions on the unrecoverable
+/// subset, not from the editor itself.
+///
+/// Opt-out via `HELIX_CONTROL_SOCKET_ALLOW_DESTRUCTIVE=1` for users who
+/// explicitly want unrestricted access (e.g., running automation that
+/// needs `:quit-all!`).
+fn is_destructive_typable_command(name: &str) -> bool {
+    if std::env::var_os("HELIX_CONTROL_SOCKET_ALLOW_DESTRUCTIVE").is_some() {
+        return false;
+    }
+    matches!(
+        name,
+        "quit!"
+            | "q!"
+            | "quit-all!"
+            | "qa!"
+            | "run-shell-command"
+            | "sh"
+            | "bang"
+            | "!"
+            | "pipe"
+            | "pipe-to"
+    )
+}
+
+#[cfg(test)]
+mod run_command_denylist_tests {
+    use super::is_destructive_typable_command;
+
+    // The four tests below mutate the process-global
+    // HELIX_CONTROL_SOCKET_ALLOW_DESTRUCTIVE env var; cargo runs tests on
+    // threads of the same process, so they have to serialize against
+    // each other or `opt_out_env_var_disables_denylist` racing against
+    // the other three would flip their assertions intermittently.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn unset_opt_out() {
+        std::env::remove_var("HELIX_CONTROL_SOCKET_ALLOW_DESTRUCTIVE");
+    }
+
+    #[test]
+    fn denies_force_quits() {
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        unset_opt_out();
+        for name in ["quit!", "q!", "quit-all!", "qa!"] {
+            assert!(
+                is_destructive_typable_command(name),
+                "should deny force-quit '{}'",
+                name
+            );
+        }
+    }
+
+    #[test]
+    fn denies_shell_execs() {
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        unset_opt_out();
+        for name in ["run-shell-command", "sh", "bang", "!", "pipe", "pipe-to"] {
+            assert!(
+                is_destructive_typable_command(name),
+                "should deny shell-exec '{}'",
+                name
+            );
+        }
+    }
+
+    #[test]
+    fn allows_common_safe_commands() {
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        unset_opt_out();
+        for name in ["write", "w", "reload", "format", "theme", "set", "quit", "q"] {
+            assert!(
+                !is_destructive_typable_command(name),
+                "should allow safe command '{}'",
+                name
+            );
+        }
+    }
+
+    #[test]
+    fn opt_out_env_var_disables_denylist() {
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::set_var("HELIX_CONTROL_SOCKET_ALLOW_DESTRUCTIVE", "1");
+        for name in ["quit!", "run-shell-command", "pipe-to"] {
+            assert!(
+                !is_destructive_typable_command(name),
+                "opt-out should pass '{}' through",
+                name
+            );
+        }
+        unset_opt_out();
+    }
+}
+
 /// Returns Err(BufferModeUnsafe) if the editor is in Insert mode and the
 /// caller didn't pass `allow_insert_mode: true`. Used by LSP-position
 /// methods to avoid querying garbage mid-typing positions.
@@ -2606,6 +2712,21 @@ impl Application {
             ControlRequest::RunCommand { name, args } => {
                 use crate::commands::typed::TYPABLE_COMMAND_MAP;
                 use helix_core::command_line::Args as CmdArgs;
+
+                if is_destructive_typable_command(&name) {
+                    let _ = reply.send(Err(JsonRpcError {
+                        code: JsonRpcErrorCode::InvalidParams,
+                        message: format!(
+                            "command '{}' is blocked by helix_run_command for safety. \
+                             It can discard unsaved work or exec arbitrary shell. \
+                             To opt in, set $HELIX_CONTROL_SOCKET_ALLOW_DESTRUCTIVE=1 \
+                             before starting Helix.",
+                            name
+                        ),
+                        data: None,
+                    }));
+                    return;
+                }
 
                 let Some(cmd) = TYPABLE_COMMAND_MAP.get(name.as_str()) else {
                     let _ = reply.send(Err(JsonRpcError {

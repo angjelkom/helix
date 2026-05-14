@@ -561,7 +561,7 @@ The MCP server's defensive principle: **prefer returning a structured MCP error 
 
 These are real-but-bounded concerns surfaced in the post-Phase-6 audit that we are deliberately not closing in this round. Listed here so a future implementer can find them and decide whether the calculus has changed.
 
-- **`helix_run_command` is unrestricted.** The tool can invoke any typable command, including `:run-shell-command`, `:write !`, `:quit!`, and `:reload!`. This is documented in the tool's MCP description (the LLM is told the tool is "POWERFUL — can do anything a user can type at `:`") so prompt-injection attacks via untrusted file content are a real concern. A future hardening pass should add either a denylist of catastrophic commands (`run-shell-command`, `quit!`, etc.) or an opt-in flag (`HELIX_MCP_ALLOW_DESTRUCTIVE=1`). Today this is by design — the assumption is the user trusts Claude and the user's repos.
+- **`helix_run_command` allows `:write` (and similar recoverable mutations).** Force-quits and shell-execs are denied (`is_destructive_typable_command` in `application.rs`); `:write`, `:reload`, `:format`, `:theme`, `:set`, etc. remain reachable. `:write` to an unintended path could overwrite a file, but the result is recoverable via the user's VCS or undo — unlike the denied commands. Users who explicitly want unrestricted access can set `HELIX_CONTROL_SOCKET_ALLOW_DESTRUCTIVE=1` before starting Helix.
 - **`helix_open_file` accepts absolute paths.** No canonicalize-and-prefix-check. Opening `/etc/shadow` is permitted at the protocol layer; the resulting buffer's contents flow back into the snapshot. Same trust assumption as above. A future hardening pass could add a workspace-confinement option.
 - **No `initialize` handshake on the bridge → Helix wire.** §6.1 specifies a handshake with version negotiation, but the bridge currently sends tool requests directly. As long as the protocol stays at v1 across both sides (today's reality) this is invisible; a future v2 bump on either side would surface confusing parse errors instead of a clean version-mismatch refusal. Adding the handshake (one round-trip per process, cached) is the obvious Phase 6b follow-up.
 - **No overall timeout on bridge→Helix RPC.** Discovery has a 200 ms connect timeout, but once connected, `write_all`/`read_line` run indefinitely. If Helix's event loop hangs (e.g., a Steel hook blocking the main thread), the MCP tool call hangs with it. A future hardening pass could wrap `send_request` in `tokio::time::timeout(30s)` and map elapsed to an MCP error. Today Claude Code's own per-tool timeout limits the blast radius.
@@ -630,7 +630,6 @@ Deferred (not shipped, not currently required — see §10b for the rationale):
 - A `--verbose` flag on the hook with telemetry breadcrumbs.
 - `initialize` handshake on the bridge→Helix wire (matters at protocol v2).
 - Overall send/recv timeout on `rpc_client::send_request` (~30 s) to defend against a hung editor event loop.
-- Hardening of `helix_run_command` (allowlist/denylist or opt-in env flag).
 - Workspace-confinement check on `helix_open_file` (currently accepts absolute paths).
 
 The deferred items can land as a Phase 6b polish round once the rest of the bridge has bedded in.

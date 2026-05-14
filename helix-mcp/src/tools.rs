@@ -91,12 +91,17 @@ impl ToolKind {
                  LSP response."
             }
             Self::HelixRunCommand => {
-                "Execute an arbitrary Helix typable command. POWERFUL — can do anything a \
-                 user can type at the `:` prompt: write files, reload config, run shell \
-                 commands via `:run-shell-command`, etc. Pass name as the command without \
-                 the leading `:`. Use args for additional arguments (joined with spaces). \
-                 Examples: { name: 'write' } to save; { name: 'reload' } to reload from \
-                 disk; { name: 'open', args: ['src/main.rs'] } to open a file."
+                "Execute a Helix typable command. Useful for { name: 'write' } to save, \
+                 { name: 'reload' } to reload from disk, { name: 'format' } to format via \
+                 the LSP, { name: 'open', args: ['src/main.rs'] } to open a file. By \
+                 default, a small denylist refuses commands whose damage cannot be undone \
+                 via normal editing: force-quits (`quit!`, `q!`, `quit-all!`, `qa!`) and \
+                 shell-execs (`run-shell-command`, `sh`, `bang`, `!`, `pipe`, `pipe-to`). \
+                 Everything else — `:write`, `:reload`, `:format`, `:theme`, `:set` — \
+                 remains available. To opt out of the denylist, set \
+                 `HELIX_CONTROL_SOCKET_ALLOW_DESTRUCTIVE=1` before starting Helix. Pass \
+                 `name` without the leading colon; pass `args` for additional positionals \
+                 (each element becomes one token, no shell parsing)."
             }
         }
     }
