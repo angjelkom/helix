@@ -1,4 +1,4 @@
-//! Integration test: spawn `helix-claude-mcp serve`, drive it via stdin/stdout
+//! Integration test: spawn `helix-mcp serve`, drive it via stdin/stdout
 //! as Claude Code would.
 
 use std::process::Stdio;
@@ -64,8 +64,8 @@ const SAMPLE_SNAPSHOT: &str = r#"{
 }"#;
 
 fn binary_path() -> std::path::PathBuf {
-    // CARGO_BIN_EXE_helix-claude-mcp is set by cargo for integration tests.
-    std::path::PathBuf::from(env!("CARGO_BIN_EXE_helix-claude-mcp"))
+    // CARGO_BIN_EXE_helix-mcp is set by cargo for integration tests.
+    std::path::PathBuf::from(env!("CARGO_BIN_EXE_helix-mcp"))
 }
 
 #[tokio::test]
@@ -82,7 +82,7 @@ async fn initialize_handshake_succeeds() {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("spawn helix-claude-mcp");
+        .expect("spawn helix-mcp");
 
     let mut stdin = child.stdin.take().unwrap();
     let stdout = child.stdout.take().unwrap();

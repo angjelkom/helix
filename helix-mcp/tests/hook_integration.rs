@@ -1,4 +1,4 @@
-//! Integration tests for `helix-claude-mcp hook`. Spawn the binary as
+//! Integration tests for `helix-mcp hook`. Spawn the binary as
 //! Claude Code does — write the stdin payload, capture stdout, check
 //! behavior.
 
@@ -30,7 +30,7 @@ const SAMPLE_SNAPSHOT_MCP_COMMAND: &str = r#"{
 }"#;
 
 fn binary_path() -> std::path::PathBuf {
-    std::path::PathBuf::from(env!("CARGO_BIN_EXE_helix-claude-mcp"))
+    std::path::PathBuf::from(env!("CARGO_BIN_EXE_helix-mcp"))
 }
 
 async fn run_hook(

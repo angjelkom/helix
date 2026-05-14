@@ -54,7 +54,7 @@ Note: Only certain languages have indentation definitions at the moment. Check
 This is a personal fork that adds two things on top of upstream Helix:
 
 - **Steel plugin system.** Merged from the upstream `steel-engine` work. See [`STEEL.md`](./STEEL.md) and [`steel-docs.md`](./steel-docs.md).
-- **Claude Code bridge.** Lets [Claude Code](https://claude.com/claude-code) read live editor state and drive the editor through Unix-socket RPC. Design spec: [`docs/specs/2026-05-12-helix-claude-mcp-bridge-design.md`](./docs/specs/2026-05-12-helix-claude-mcp-bridge-design.md). Bridge crate readme: [`helix-claude-mcp/README.md`](./helix-claude-mcp/README.md).
+- **Claude Code bridge.** Lets [Claude Code](https://claude.com/claude-code) read live editor state and drive the editor through Unix-socket RPC. Design spec: [`docs/specs/2026-05-12-helix-mcp-bridge-design.md`](./docs/specs/2026-05-12-helix-mcp-bridge-design.md). Bridge crate readme: [`helix-mcp/README.md`](./helix-mcp/README.md).
 
 ## Building
 
@@ -70,11 +70,11 @@ cargo install \
 cargo install \
   --profile opt \
   --config 'build.rustflags="-C target-cpu=native"' \
-  --path helix-claude-mcp \
+  --path helix-mcp \
   --locked
 ```
 
-That places `hx` and `helix-claude-mcp` in `~/.cargo/bin`. Restart any running Helix sessions and Claude Code sessions after a rebuild — both cache the spawned process per session.
+That places `hx` and `helix-mcp` in `~/.cargo/bin`. Restart any running Helix sessions and Claude Code sessions after a rebuild — both cache the spawned process per session.
 
 ## Helix configuration
 
@@ -104,7 +104,7 @@ Tell Claude Code about the bridge. Either project-scoped (committed to the repo)
 {
   "mcpServers": {
     "helix": {
-      "command": "helix-claude-mcp",
+      "command": "helix-mcp",
       "args": ["serve"]
     }
   }
@@ -113,11 +113,13 @@ Tell Claude Code about the bridge. Either project-scoped (committed to the repo)
 
 …or globally in `~/.claude.json` under the same `"mcpServers"` key. Claude Code spawns the binary per session and sets `CLAUDE_PROJECT_DIR` automatically.
 
-The same binary works with any MCP-compatible coding agent — Codex CLI (`~/.codex/config.toml` under `[mcp_servers.helix]`), Cursor (`~/.cursor/mcp.json`), Cline, Continue, Zed, etc. Register `helix-claude-mcp serve` as a stdio server in whatever format the agent expects. The bridge embeds its own operating instructions in the MCP `initialize` response, so any compliant agent automatically learns how to use the tools (navigate-before-edit workflow, when to read `helix://state/current`, insert-mode safety, etc.) without needing per-agent rules files.
+The same binary works with any MCP-compatible coding agent — Codex CLI (`~/.codex/config.toml` under `[mcp_servers.helix]`), Cursor (`~/.cursor/mcp.json`), Cline, Continue, Zed, etc. Register `helix-mcp serve` as a stdio server in whatever format the agent expects. The bridge embeds its own operating instructions in the MCP `initialize` response, so any compliant agent automatically learns how to use the tools (navigate-before-edit workflow, when to read `helix://state/current`, insert-mode safety, etc.) without needing per-agent rules files.
 
-## Claude Code hooks (passive context injection)
+## Claude Code hooks (optional — for proactive context injection)
 
-The bridge also ships a `hook` subcommand that injects a `<helix-editor-context>` block into each prompt. In `~/.claude/settings.json`:
+The MCP `initialize` response already tells the agent to read `helix://state/current` whenever it needs the current editor state, so the hook below is **optional**. Skip this section if you want a minimal setup. Add it back only if you want context inlined into every prompt without the LLM having to make a tool call — useful for very chatty workflows in Claude Code specifically.
+
+The bridge ships a `hook` subcommand that injects a `<helix-editor-context>` block into each prompt. In `~/.claude/settings.json`:
 
 ```json
 {
@@ -125,14 +127,14 @@ The bridge also ships a `hook` subcommand that injects a `<helix-editor-context>
     "UserPromptSubmit": [
       {
         "hooks": [
-          { "type": "command", "command": "helix-claude-mcp hook", "timeout": 5 }
+          { "type": "command", "command": "helix-mcp hook", "timeout": 5 }
         ]
       }
     ],
     "PostCompact": [
       {
         "hooks": [
-          { "type": "command", "command": "helix-claude-mcp hook --reset-marker" }
+          { "type": "command", "command": "helix-mcp hook --reset-marker" }
         ]
       }
     ],
@@ -140,7 +142,7 @@ The bridge also ships a `hook` subcommand that injects a `<helix-editor-context>
       {
         "matcher": "compact",
         "hooks": [
-          { "type": "command", "command": "helix-claude-mcp hook --reset-marker" }
+          { "type": "command", "command": "helix-mcp hook --reset-marker" }
         ]
       }
     ]

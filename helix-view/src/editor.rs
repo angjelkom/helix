@@ -1109,7 +1109,7 @@ impl Default for ContextLoggerConfig {
 /// and accepts JSON-RPC requests from external tools. Disabled by default —
 /// the feature is opt-in.
 ///
-/// See `docs/specs/2026-05-12-helix-claude-mcp-bridge-design.md` (§5) for the
+/// See `docs/specs/2026-05-12-helix-mcp-bridge-design.md` (§5) for the
 /// full design.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", default)]

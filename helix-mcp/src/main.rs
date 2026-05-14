@@ -1,4 +1,4 @@
-//! `helix-claude-mcp` — MCP bridge that exposes the Helix editor's control
+//! `helix-mcp` — MCP bridge that exposes the Helix editor's control
 //! socket through the Model Context Protocol to Claude Code.
 //!
 //! Subcommands:
@@ -22,7 +22,7 @@ mod tools;
 pub(crate) static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[derive(Parser)]
-#[command(name = "helix-claude-mcp", version)]
+#[command(name = "helix-mcp", version)]
 #[command(about = "MCP bridge for the Helix editor's control socket")]
 struct Cli {
     #[command(subcommand)]
