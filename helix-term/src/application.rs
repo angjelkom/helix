@@ -283,6 +283,77 @@ mod run_command_denylist_tests {
     }
 }
 
+/// Convert a 1-indexed `(line, column)` pair to a 0-indexed char index
+/// in the rope. Lines past EOF clamp to the last line; columns past
+/// line-end clamp to line-end-before-newline. Used by every MCP method
+/// that takes user-facing 1-indexed coordinates (goto-line, get-hover,
+/// get-definition, get-references). The select-range handler has a
+/// closure form because it computes two of these in succession but the
+/// algorithm is the same.
+fn one_indexed_to_char(text: &helix_core::Rope, line: usize, column: usize) -> usize {
+    let last_line = text.len_lines().saturating_sub(1);
+    let target_line = line.saturating_sub(1).min(last_line);
+    let line_start = text.line_to_char(target_line);
+    let line_end = if target_line + 1 < text.len_lines() {
+        text.line_to_char(target_line + 1).saturating_sub(1)
+    } else {
+        text.len_chars()
+    };
+    let target_col = column.saturating_sub(1);
+    (line_start + target_col).min(line_end)
+}
+
+#[cfg(test)]
+mod one_indexed_to_char_tests {
+    use super::one_indexed_to_char;
+    use helix_core::Rope;
+
+    #[test]
+    fn first_line_first_column_returns_zero() {
+        let text = Rope::from_str("abc\ndef\n");
+        assert_eq!(one_indexed_to_char(&text, 1, 1), 0);
+    }
+
+    #[test]
+    fn middle_of_second_line() {
+        let text = Rope::from_str("abc\ndef\n");
+        // Line 2 starts at char 4; column 2 → char 5 ('e').
+        assert_eq!(one_indexed_to_char(&text, 2, 2), 5);
+    }
+
+    #[test]
+    fn column_past_line_end_clamps_to_line_end() {
+        let text = Rope::from_str("abc\ndef\n");
+        // Line 1 is "abc" (3 chars) + newline; column 100 should clamp
+        // to line-end-before-newline = char 3.
+        assert_eq!(one_indexed_to_char(&text, 1, 100), 3);
+    }
+
+    #[test]
+    fn line_past_eof_clamps_to_last_line() {
+        let text = Rope::from_str("abc\ndef\n");
+        // The rope has 2 content lines + a trailing empty one (3 lines
+        // total per ropey's count). Line 99 clamps to the last line's
+        // start.
+        let result = one_indexed_to_char(&text, 99, 1);
+        assert!(result >= 8, "expected EOF area, got {}", result);
+    }
+
+    #[test]
+    fn zero_line_treated_as_first() {
+        let text = Rope::from_str("abc\ndef\n");
+        // saturating_sub(1) on 0 gives 0 → first line.
+        assert_eq!(one_indexed_to_char(&text, 0, 1), 0);
+    }
+
+    #[test]
+    fn empty_rope_returns_zero() {
+        let text = Rope::from_str("");
+        assert_eq!(one_indexed_to_char(&text, 1, 1), 0);
+        assert_eq!(one_indexed_to_char(&text, 100, 100), 0);
+    }
+}
+
 /// Returns Err(BufferModeUnsafe) if the editor is in Insert mode and the
 /// caller didn't pass `allow_insert_mode: true`. Used by LSP-position
 /// methods to avoid querying garbage mid-typing positions.
@@ -1939,6 +2010,32 @@ impl Application {
         errs
     }
 
+    /// Rewrite the snapshot file with `UpdateSource::McpCommand` after a
+    /// mutation MCP method (open-file, goto-line, select-range,
+    /// format-document, run-command). Per spec §5.5, the call goes
+    /// through `context_logger::write_context_file` directly — not via
+    /// `helix_event::dispatch` — so Steel hooks don't fire spuriously on
+    /// each MCP mutation. Errors are logged at warn and swallowed; the
+    /// snapshot is a non-durable cache and the user-visible MCP reply
+    /// has already succeeded by this point.
+    fn rewrite_snapshot_after_mcp_mutation(&self, method: &'static str) {
+        let instance = self
+            .control_socket_binding
+            .as_ref()
+            .map(|s| s.to_instance());
+        if let Err(e) = crate::context_logger::write_context_file(
+            &self.editor,
+            helix_context_schema::UpdateSource::McpCommand,
+            instance,
+        ) {
+            log::warn!(
+                "control-socket: snapshot rewrite failed after {}: {}",
+                method,
+                e
+            );
+        }
+    }
+
     fn handle_control_request(&mut self, event: helix_view::editor::EditorEvent) {
         use helix_context_schema::{
             ControlRequest, ControlResponse, JsonRpcError, JsonRpcErrorCode,
@@ -2089,16 +2186,7 @@ impl Application {
                             }
                         }
 
-                        // Snapshot rewrite per spec §5.5 — direct call, not via
-                        // helix_event::dispatch, to avoid firing Steel hooks.
-                        let instance = self.control_socket_binding.as_ref().map(|s| s.to_instance());
-                        if let Err(e) = crate::context_logger::write_context_file(
-                            &self.editor,
-                            helix_context_schema::UpdateSource::McpCommand,
-                            instance,
-                        ) {
-                            log::warn!("control-socket: snapshot rewrite failed after open-file: {}", e);
-                        }
+                        self.rewrite_snapshot_after_mcp_mutation("open-file");
                         Ok(ControlResponse::Ok {})
                     }
                     Err(e) => Err(JsonRpcError {
@@ -2146,18 +2234,8 @@ impl Application {
                         return;
                     }
                 };
-                let text = doc.text();
-                // 1-indexed → 0-indexed; clamp to last line.
-                let target_line = line.saturating_sub(1).min(text.len_lines().saturating_sub(1));
-                let line_start_char = text.line_to_char(target_line);
-                let target_col = column.unwrap_or(1).saturating_sub(1);
-                // Cap at the line's length to avoid off-the-end columns.
-                let line_end_char = if target_line + 1 < text.len_lines() {
-                    text.line_to_char(target_line + 1).saturating_sub(1)
-                } else {
-                    text.len_chars()
-                };
-                let char_idx = (line_start_char + target_col).min(line_end_char);
+                let char_idx = one_indexed_to_char(doc.text(), line, column.unwrap_or(1));
+
 
                 let selection = helix_core::Selection::point(char_idx);
                 doc.set_selection(view_id, selection);
@@ -2173,14 +2251,7 @@ impl Application {
                     }
                 }
 
-                let instance = self.control_socket_binding.as_ref().map(|s| s.to_instance());
-                if let Err(e) = crate::context_logger::write_context_file(
-                    &self.editor,
-                    helix_context_schema::UpdateSource::McpCommand,
-                    instance,
-                ) {
-                    log::warn!("control-socket: snapshot rewrite failed after goto-line: {}", e);
-                }
+                self.rewrite_snapshot_after_mcp_mutation("goto-line");
 
                 let _ = reply.send(Ok(ControlResponse::Ok {}));
                 return;
@@ -2219,26 +2290,8 @@ impl Application {
                     }
                 };
                 let text = doc.text();
-
-                // Helper: clamp a 1-indexed (line, col) to a valid char index
-                // in `text`. Returns the char index. Columns past line end
-                // clamp to line-end-before-newline; lines past EOF clamp to
-                // EOF.
-                let pos_to_char = |line: usize, column: usize| -> usize {
-                    let last_line = text.len_lines().saturating_sub(1);
-                    let target_line = line.saturating_sub(1).min(last_line);
-                    let line_start = text.line_to_char(target_line);
-                    let line_end = if target_line + 1 < text.len_lines() {
-                        text.line_to_char(target_line + 1).saturating_sub(1)
-                    } else {
-                        text.len_chars()
-                    };
-                    let target_col = column.saturating_sub(1);
-                    (line_start + target_col).min(line_end)
-                };
-
-                let anchor = pos_to_char(start_line, start_column);
-                let head = pos_to_char(end_line, end_column);
+                let anchor = one_indexed_to_char(text, start_line, start_column);
+                let head = one_indexed_to_char(text, end_line, end_column);
                 let selection = helix_core::Selection::single(anchor, head);
                 doc.set_selection(view_id, selection);
 
@@ -2253,14 +2306,7 @@ impl Application {
                     }
                 }
 
-                let instance = self.control_socket_binding.as_ref().map(|s| s.to_instance());
-                if let Err(e) = crate::context_logger::write_context_file(
-                    &self.editor,
-                    helix_context_schema::UpdateSource::McpCommand,
-                    instance,
-                ) {
-                    log::warn!("control-socket: snapshot rewrite failed after select-range: {}", e);
-                }
+                self.rewrite_snapshot_after_mcp_mutation("select-range");
 
                 let _ = reply.send(Ok(ControlResponse::Ok {}));
                 return;
@@ -2356,15 +2402,7 @@ impl Application {
 
                 // Convert 1-indexed (line, column) to a char index, then to LSP Position.
                 let text = doc.text();
-                let target_line = line.saturating_sub(1).min(text.len_lines().saturating_sub(1));
-                let target_col = column.saturating_sub(1);
-                let line_start = text.line_to_char(target_line);
-                let line_end_char = if target_line + 1 < text.len_lines() {
-                    text.line_to_char(target_line + 1).saturating_sub(1)
-                } else {
-                    text.len_chars()
-                };
-                let pos_char = (line_start + target_col).min(line_end_char);
+                let pos_char = one_indexed_to_char(text, line, column);
                 let lsp_pos = helix_lsp::util::pos_to_lsp_pos(
                     text,
                     pos_char,
@@ -2440,15 +2478,7 @@ impl Application {
 
                 // Convert 1-indexed (line, column) to a char index, then to LSP Position.
                 let text = doc.text();
-                let target_line = line.saturating_sub(1).min(text.len_lines().saturating_sub(1));
-                let target_col = column.saturating_sub(1);
-                let line_start = text.line_to_char(target_line);
-                let line_end_char = if target_line + 1 < text.len_lines() {
-                    text.line_to_char(target_line + 1).saturating_sub(1)
-                } else {
-                    text.len_chars()
-                };
-                let pos_char = (line_start + target_col).min(line_end_char);
+                let pos_char = one_indexed_to_char(text, line, column);
                 let lsp_pos = helix_lsp::util::pos_to_lsp_pos(
                     text,
                     pos_char,
@@ -2515,15 +2545,7 @@ impl Application {
                 };
 
                 let text = doc.text();
-                let target_line = line.saturating_sub(1).min(text.len_lines().saturating_sub(1));
-                let target_col = column.saturating_sub(1);
-                let line_start = text.line_to_char(target_line);
-                let line_end_char = if target_line + 1 < text.len_lines() {
-                    text.line_to_char(target_line + 1).saturating_sub(1)
-                } else {
-                    text.len_chars()
-                };
-                let pos_char = (line_start + target_col).min(line_end_char);
+                let pos_char = one_indexed_to_char(text, line, column);
                 let lsp_pos = helix_lsp::util::pos_to_lsp_pos(
                     text,
                     pos_char,
@@ -2693,15 +2715,8 @@ impl Application {
                 };
                 let applied = (cmd.fun)(&mut cx, args_parsed, crate::ui::PromptEvent::Validate).is_ok();
 
-                // Snapshot rewrite — formatting mutates the buffer (asynchronously via jobs).
-                let instance = self.control_socket_binding.as_ref().map(|s| s.to_instance());
-                if let Err(e) = crate::context_logger::write_context_file(
-                    &self.editor,
-                    helix_context_schema::UpdateSource::McpCommand,
-                    instance,
-                ) {
-                    log::warn!("control-socket: snapshot rewrite failed after format-document: {}", e);
-                }
+                // Format mutates the buffer (asynchronously via jobs).
+                self.rewrite_snapshot_after_mcp_mutation("format-document");
 
                 let _ = reply.send(Ok(ControlResponse::FormatDocument { applied }));
                 return;
@@ -2780,15 +2795,8 @@ impl Application {
 
                 match result {
                     Ok(()) => {
-                        // Rewrite the snapshot — run-command may have mutated state.
-                        let instance = self.control_socket_binding.as_ref().map(|s| s.to_instance());
-                        if let Err(e) = crate::context_logger::write_context_file(
-                            &self.editor,
-                            helix_context_schema::UpdateSource::McpCommand,
-                            instance,
-                        ) {
-                            log::warn!("control-socket: snapshot rewrite failed after run-command: {}", e);
-                        }
+                        // run-command may have mutated state — rewrite snapshot.
+                        self.rewrite_snapshot_after_mcp_mutation("run-command");
                         let _ = reply.send(Ok(ControlResponse::RunCommand { message }));
                     }
                     Err(e) => {
