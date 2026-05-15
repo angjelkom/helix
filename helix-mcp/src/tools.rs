@@ -26,6 +26,7 @@ pub enum ToolKind {
     HelixGetDefinition,
     HelixGetReferences,
     HelixGetWorkspaceSymbols,
+    HelixGetDocumentSymbols,
     HelixGetSelection,
     HelixBufferRead,
     HelixFormatDocument,
@@ -128,6 +129,20 @@ pub const TOOLS: &[ToolSpec] = &[
              kind, name, location.",
         schema: schemas::get_workspace_symbols,
         parse_request: parsers::get_workspace_symbols,
+    },
+    ToolSpec {
+        kind: ToolKind::HelixGetDocumentSymbols,
+        name: "helix_get_document_symbols",
+        description:
+            "Return the structured outline of a file from its attached LSP \
+             (functions, methods, classes, fields…). Unique value over \
+             helix_get_workspace_symbols: workspace-symbols is fuzzy global \
+             search; this is the outline of one file. Unique value over \
+             grep: tree-aware, structured, includes type kind and \
+             declaration vs definition ranges — grep can't tell you that. \
+             Returns a nested tree; children belong to their parent's range.",
+        schema: schemas::get_document_symbols,
+        parse_request: parsers::get_document_symbols,
     },
     ToolSpec {
         kind: ToolKind::HelixGetSelection,
@@ -292,6 +307,12 @@ pub struct HelixGetWorkspaceSymbolsArgs {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct HelixGetDocumentSymbolsArgs {
+    #[serde(default)]
+    pub path: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct HelixGetSelectionArgs {
     #[serde(default)]
     pub path: Option<String>,
@@ -444,6 +465,15 @@ mod schemas {
         })
     }
 
+    pub fn get_document_symbols() -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "path": { "type": "string", "description": "Buffer path (optional; defaults to active). Must already be open and attached to an LSP." }
+            }
+        })
+    }
+
     pub fn run_command() -> Value {
         json!({
             "type": "object",
@@ -545,6 +575,11 @@ mod parsers {
         Ok(ControlRequest::GetSelections { path: a.path })
     }
 
+    pub fn get_document_symbols(v: Value) -> Result<ControlRequest, serde_json::Error> {
+        let a: HelixGetDocumentSymbolsArgs = serde_json::from_value(v)?;
+        Ok(ControlRequest::GetDocumentSymbols { path: a.path })
+    }
+
     pub fn buffer_read(v: Value) -> Result<ControlRequest, serde_json::Error> {
         let a: HelixBufferReadArgs = serde_json::from_value(v)?;
         // The wire method takes Option<LineRange>; build one only when
@@ -593,6 +628,7 @@ mod tests {
             ToolKind::HelixGetDefinition,
             ToolKind::HelixGetReferences,
             ToolKind::HelixGetWorkspaceSymbols,
+            ToolKind::HelixGetDocumentSymbols,
             ToolKind::HelixGetSelection,
             ToolKind::HelixBufferRead,
             ToolKind::HelixFormatDocument,
@@ -607,9 +643,9 @@ mod tests {
     }
 
     #[test]
-    fn all_iterates_twelve_kinds() {
+    fn all_iterates_thirteen_kinds() {
         let kinds: Vec<_> = ToolKind::all().collect();
-        assert_eq!(kinds.len(), 12);
+        assert_eq!(kinds.len(), 13);
     }
 
     #[test]
