@@ -1964,6 +1964,14 @@ impl Application {
             return;
         };
 
+        // Resolve the workspace once per dispatch instead of once per arm
+        // (used to be 12+ calls). Each `find_workspace()` walks ancestors
+        // looking for .git/.svn/.jj/.helix — cheap individually but worth
+        // not paying repeatedly. `write_context_file` still discovers its
+        // own workspace internally — that's a separate path used by focus-
+        // loss too. Eliminating that second discovery is a follow-up.
+        let (workspace, is_cwd_fallback) = helix_loader::find_workspace();
+
         let resp: Result<ControlResponse, JsonRpcError> = match request {
             ControlRequest::Initialize { .. } => {
                 // Shouldn't happen — Initialize is inline-dispatched.
@@ -1974,7 +1982,6 @@ impl Application {
                 })
             }
             ControlRequest::CurrentState {} => {
-                let (workspace, is_cwd_fallback) = helix_loader::find_workspace();
                 if is_cwd_fallback {
                     Err(JsonRpcError {
                         code: JsonRpcErrorCode::NoActiveDocument,
@@ -2010,7 +2017,6 @@ impl Application {
                 Ok(ControlResponse::GetOpenBuffers { buffers })
             }
             ControlRequest::GetBufferText { path, range } => {
-                let (workspace, _) = helix_loader::find_workspace();
                 let doc_result = resolve_buffer(&self.editor, &workspace, path.as_deref());
                 match doc_result {
                     Err(e) => Err(e),
@@ -2047,7 +2053,6 @@ impl Application {
                 }
             }
             ControlRequest::OpenFile { path, line, column } => {
-                let (workspace, is_cwd_fallback) = helix_loader::find_workspace();
                 let resolved_path: std::path::PathBuf = {
                     let p = std::path::Path::new(&path);
                     if p.is_absolute() {
@@ -2120,7 +2125,6 @@ impl Application {
                 result
             }
             ControlRequest::GotoLine { line, column, path } => {
-                let (workspace, _) = helix_loader::find_workspace();
                 // resolve_buffer takes &Editor and gives us a &Document. We need
                 // to ALSO open the buffer if a path was given but isn't currently
                 // open — but for Phase 2c we keep it strict: error if not open,
@@ -2203,7 +2207,6 @@ impl Application {
                 end_column,
                 path,
             } => {
-                let (workspace, _) = helix_loader::find_workspace();
                 let doc_id = match resolve_buffer(&self.editor, &workspace, path.as_deref()) {
                     Ok(d) => d.id(),
                     Err(e) => {
@@ -2278,7 +2281,6 @@ impl Application {
                 return;
             }
             ControlRequest::GetDiagnostics { path } => {
-                let (workspace, _) = helix_loader::find_workspace();
                 let doc = match resolve_buffer(&self.editor, &workspace, path.as_deref()) {
                     Ok(d) => d,
                     Err(e) => {
@@ -2336,7 +2338,6 @@ impl Application {
                     let _ = reply.send(Err(e));
                     return;
                 }
-                let (workspace, _) = helix_loader::find_workspace();
                 let doc = match resolve_buffer(&self.editor, &workspace, path.as_deref()) {
                     Ok(d) => d,
                     Err(e) => {
@@ -2421,7 +2422,6 @@ impl Application {
                     let _ = reply.send(Err(e));
                     return;
                 }
-                let (workspace, _) = helix_loader::find_workspace();
                 let doc = match resolve_buffer(&self.editor, &workspace, path.as_deref()) {
                     Ok(d) => d,
                     Err(e) => {
@@ -2500,7 +2500,6 @@ impl Application {
                     let _ = reply.send(Err(e));
                     return;
                 }
-                let (workspace, _) = helix_loader::find_workspace();
                 let doc = match resolve_buffer(&self.editor, &workspace, path.as_deref()) {
                     Ok(d) => d,
                     Err(e) => {
@@ -2597,7 +2596,6 @@ impl Application {
                     return;
                 };
 
-                let (workspace, _) = helix_loader::find_workspace();
                 let workspace_clone = workspace.clone();
                 let future = match lsp_client.workspace_symbols(query.clone()) {
                     Some(f) => f,
@@ -2654,7 +2652,6 @@ impl Application {
                 use helix_core::command_line::Args as CmdArgs;
                 use helix_view::expansion;
 
-                let (workspace, _) = helix_loader::find_workspace();
                 if let Some(p) = path.as_deref() {
                     let doc_id = match resolve_buffer(&self.editor, &workspace, Some(p)) {
                         Ok(doc) => doc.id(),
