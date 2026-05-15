@@ -303,6 +303,21 @@ fn one_indexed_to_char(text: &helix_core::Rope, line: usize, column: usize) -> u
     (line_start + target_col).min(line_end)
 }
 
+/// Inverse of `one_indexed_to_char`: given a char index into the rope,
+/// return the 1-indexed `Position` (line, column). Used by
+/// `GetSelections` to project Helix's char-based ranges back into the
+/// user-facing coordinate system the snapshot already uses.
+fn char_idx_to_one_indexed(text: &helix_core::Rope, char_idx: usize) -> helix_context_schema::Position {
+    let char_idx = char_idx.min(text.len_chars());
+    let line = text.char_to_line(char_idx);
+    let line_start = text.line_to_char(line);
+    let column = char_idx.saturating_sub(line_start);
+    helix_context_schema::Position {
+        line: line + 1,
+        column: column + 1,
+    }
+}
+
 #[cfg(test)]
 mod one_indexed_to_char_tests {
     use super::one_indexed_to_char;
@@ -2106,6 +2121,75 @@ impl Application {
                     })
                     .collect();
                 Ok(ControlResponse::GetOpenBuffers { buffers })
+            }
+            ControlRequest::GetSelections { path } => {
+                let doc = match resolve_buffer(&self.editor, &workspace, path.as_deref()) {
+                    Ok(d) => d,
+                    Err(e) => {
+                        let _ = reply.send(Err(e));
+                        return;
+                    }
+                };
+                let view_id = self.editor.tree.focus;
+                let text = doc.text();
+                let selection = doc.selection(view_id);
+                let primary_index = selection.primary_index();
+
+                // Per-range cap so a massive selection doesn't ship
+                // megabytes of text in the response. Each range's text
+                // is truncated to MAX_SELECTION_TEXT_BYTES with a
+                // sentinel marker; line-count info still flows back
+                // through the snapshot's existing path if needed.
+                const MAX_SELECTION_TEXT_BYTES: usize = 64 * 1024;
+
+                let selections: Vec<helix_context_schema::Selection> = selection
+                    .ranges()
+                    .iter()
+                    .enumerate()
+                    .map(|(i, range)| {
+                        let from = range.from();
+                        let to = range.to();
+                        let byte_len = text.slice(from..to).len_bytes();
+                        let extracted: String = text.slice(from..to).into();
+                        let truncated = if extracted.len() > MAX_SELECTION_TEXT_BYTES {
+                            // Truncate on a UTF-8 boundary to keep
+                            // the JSON encoder happy.
+                            let mut cut = MAX_SELECTION_TEXT_BYTES;
+                            while !extracted.is_char_boundary(cut) && cut > 0 {
+                                cut -= 1;
+                            }
+                            let mut t = extracted[..cut].to_string();
+                            t.push_str("…[truncated by helix-mcp]");
+                            t
+                        } else {
+                            extracted
+                        };
+                        let anchor_pos = char_idx_to_one_indexed(text, range.anchor);
+                        let head_pos = char_idx_to_one_indexed(text, range.head);
+                        // Snapshot's `Selection` stores `start`/`end` —
+                        // map our anchor/head to that shape, keeping
+                        // start ≤ end so the JSON makes sense to
+                        // downstream JSON consumers.
+                        let (start, end) = if range.anchor <= range.head {
+                            (anchor_pos, head_pos)
+                        } else {
+                            (head_pos, anchor_pos)
+                        };
+                        helix_context_schema::Selection {
+                            primary: i == primary_index,
+                            start,
+                            end,
+                            byte_len,
+                            text: Some(truncated),
+                        }
+                    })
+                    .collect();
+
+                Ok(ControlResponse::GetSelections {
+                    selections,
+                    primary_index,
+                    mode: format!("{:?}", self.editor.mode).to_lowercase(),
+                })
             }
             ControlRequest::GetBufferText { path, range } => {
                 let doc_result = resolve_buffer(&self.editor, &workspace, path.as_deref());

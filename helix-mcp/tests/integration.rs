@@ -390,6 +390,7 @@ async fn tools_list_returns_all_registered_tools() {
         "helix_get_definition",
         "helix_get_references",
         "helix_get_workspace_symbols",
+        "helix_get_selection",
         "helix_buffer_read",
         "helix_format_document",
         "helix_run_command",
@@ -401,7 +402,7 @@ async fn tools_list_returns_all_registered_tools() {
             names
         );
     }
-    assert_eq!(names.len(), 11, "expected 11 tools, got: {:?}", names);
+    assert_eq!(names.len(), 12, "expected 12 tools, got: {:?}", names);
 }
 
 #[tokio::test]
@@ -574,6 +575,21 @@ async fn tools_call_buffer_read_with_range() {
         .await;
     let inner = tool_result_inner(&result);
     assert_eq!(inner["result"]["line_count"], 2);
+}
+
+#[tokio::test]
+async fn tools_call_get_selection_against_fake_helix() {
+    let canned = r#"{"method":"get-selections","result":{"selections":[{"primary":true,"start":{"line":1,"column":1},"end":{"line":2,"column":5},"byte_len":15,"text":"fn main() {\n    "}],"primary_index":0,"mode":"normal"}}"#.to_string() + "\n";
+    let mut h = Harness::new_with_fake_helix(&canned).await;
+    h.handshake().await;
+    let result = h.call_tool("helix_get_selection", json!({})).await;
+    let inner = tool_result_inner(&result);
+    assert_eq!(inner["method"], "get-selections");
+    let sels = inner["result"]["selections"].as_array().unwrap();
+    assert_eq!(sels.len(), 1);
+    assert_eq!(sels[0]["primary"], true);
+    assert_eq!(sels[0]["text"], "fn main() {\n    ");
+    assert_eq!(inner["result"]["mode"], "normal");
 }
 
 #[tokio::test]
