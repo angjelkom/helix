@@ -26,6 +26,7 @@ pub enum ToolKind {
     HelixGetDefinition,
     HelixGetReferences,
     HelixGetWorkspaceSymbols,
+    HelixBufferRead,
     HelixFormatDocument,
     HelixRunCommand,
 }
@@ -126,6 +127,20 @@ pub const TOOLS: &[ToolSpec] = &[
              kind, name, location.",
         schema: schemas::get_workspace_symbols,
         parse_request: parsers::get_workspace_symbols,
+    },
+    ToolSpec {
+        kind: ToolKind::HelixBufferRead,
+        name: "helix_buffer_read",
+        description:
+            "Read text from a Helix buffer's live (in-memory) rope. Prefer over \
+             the standard Read tool when the user may have unsaved edits — the \
+             rope reflects what's in the editor right now, not what's on disk. \
+             Optional 1-indexed start_line/end_line (inclusive) for a slice; \
+             omit both to read the whole buffer. The buffer must already be \
+             open; pass `path` to read a specific buffer or omit to read the \
+             active one.",
+        schema: schemas::buffer_read,
+        parse_request: parsers::buffer_read,
     },
     ToolSpec {
         kind: ToolKind::HelixFormatDocument,
@@ -261,6 +276,16 @@ pub struct HelixGetWorkspaceSymbolsArgs {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct HelixBufferReadArgs {
+    #[serde(default)]
+    pub path: Option<String>,
+    #[serde(default)]
+    pub start_line: Option<usize>,
+    #[serde(default)]
+    pub end_line: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct HelixFormatDocumentArgs {
     #[serde(default)]
     pub path: Option<String>,
@@ -377,6 +402,17 @@ mod schemas {
         })
     }
 
+    pub fn buffer_read() -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "path": { "type": "string", "description": "Buffer path (optional; defaults to active)" },
+                "start_line": { "type": "integer", "minimum": 1, "description": "Optional 1-indexed first line to include (inclusive)" },
+                "end_line": { "type": "integer", "minimum": 1, "description": "Optional 1-indexed last line to include (inclusive). Both start_line and end_line must be set to slice." }
+            }
+        })
+    }
+
     pub fn run_command() -> Value {
         json!({
             "type": "object",
@@ -473,6 +509,26 @@ mod parsers {
         Ok(ControlRequest::FormatDocument { path: a.path })
     }
 
+    pub fn buffer_read(v: Value) -> Result<ControlRequest, serde_json::Error> {
+        let a: HelixBufferReadArgs = serde_json::from_value(v)?;
+        // The wire method takes Option<LineRange>; build one only when
+        // both endpoints are present. Single-endpoint args are
+        // ambiguous (read from line N to end? start to N?), so we
+        // require both or neither.
+        let range = match (a.start_line, a.end_line) {
+            (Some(start_line), Some(end_line)) => {
+                Some(helix_context_schema::LineRange { start_line, end_line })
+            }
+            (None, None) => None,
+            _ => {
+                return Err(serde::de::Error::custom(
+                    "helix_buffer_read requires both start_line and end_line, or neither",
+                ));
+            }
+        };
+        Ok(ControlRequest::GetBufferText { path: a.path, range })
+    }
+
     pub fn run_command(v: Value) -> Result<ControlRequest, serde_json::Error> {
         let a: HelixRunCommandArgs = serde_json::from_value(v)?;
         Ok(ControlRequest::RunCommand {
@@ -501,6 +557,7 @@ mod tests {
             ToolKind::HelixGetDefinition,
             ToolKind::HelixGetReferences,
             ToolKind::HelixGetWorkspaceSymbols,
+            ToolKind::HelixBufferRead,
             ToolKind::HelixFormatDocument,
             ToolKind::HelixRunCommand,
         ];
@@ -513,9 +570,9 @@ mod tests {
     }
 
     #[test]
-    fn all_iterates_ten_kinds() {
+    fn all_iterates_eleven_kinds() {
         let kinds: Vec<_> = ToolKind::all().collect();
-        assert_eq!(kinds.len(), 10);
+        assert_eq!(kinds.len(), 11);
     }
 
     #[test]
