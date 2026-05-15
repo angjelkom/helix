@@ -390,6 +390,7 @@ async fn tools_list_returns_all_registered_tools() {
         "helix_get_definition",
         "helix_get_references",
         "helix_get_workspace_symbols",
+        "helix_get_document_symbols",
         "helix_get_selection",
         "helix_buffer_read",
         "helix_format_document",
@@ -402,7 +403,7 @@ async fn tools_list_returns_all_registered_tools() {
             names
         );
     }
-    assert_eq!(names.len(), 12, "expected 12 tools, got: {:?}", names);
+    assert_eq!(names.len(), 13, "expected 13 tools, got: {:?}", names);
 }
 
 #[tokio::test]
@@ -575,6 +576,20 @@ async fn tools_call_buffer_read_with_range() {
         .await;
     let inner = tool_result_inner(&result);
     assert_eq!(inner["result"]["line_count"], 2);
+}
+
+#[tokio::test]
+async fn tools_call_get_document_symbols_against_fake_helix() {
+    let canned = r#"{"method":"get-document-symbols","result":{"symbols":[{"name":"main","kind":"function","range":{"start":{"line":0,"character":0},"end":{"line":2,"character":1}},"selection_range":{"start":{"line":0,"character":3},"end":{"line":0,"character":7}},"children":[]}]}}"#.to_string() + "\n";
+    let mut h = Harness::new_with_fake_helix(&canned).await;
+    h.handshake().await;
+    let result = h.call_tool("helix_get_document_symbols", json!({})).await;
+    let inner = tool_result_inner(&result);
+    assert_eq!(inner["method"], "get-document-symbols");
+    let syms = inner["result"]["symbols"].as_array().unwrap();
+    assert_eq!(syms.len(), 1);
+    assert_eq!(syms[0]["name"], "main");
+    assert_eq!(syms[0]["kind"], "function");
 }
 
 #[tokio::test]
