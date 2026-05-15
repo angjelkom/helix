@@ -229,7 +229,12 @@ async fn dispatch_tool(request: ControlRequest) -> CallToolResult {
     use crate::{discovery, rpc_client};
     use rpc_client::{HandshakeOutcome, RpcError};
 
-    let socket = match discovery::find_helix_socket(None).await {
+    // Cached discovery: first call runs full read_dir + connect probes;
+    // subsequent calls reuse the cached path while it still exists on
+    // disk. Transport errors below call `invalidate_socket_cache` so a
+    // restart with a different socket filename triggers re-discovery
+    // on the next tool call.
+    let socket = match discovery::find_helix_socket_cached(None).await {
         Ok(s) => s,
         Err(e) => {
             return tool_error(format!(
@@ -256,6 +261,7 @@ async fn dispatch_tool(request: ControlRequest) -> CallToolResult {
             ));
         }
         Err(e) => {
+            discovery::invalidate_socket_cache().await;
             rpc_client::invalidate_handshake_cache().await;
             return tool_error(format!(
                 "Handshake with Helix failed: {}. The next tool call will retry.",
@@ -278,9 +284,11 @@ async fn dispatch_tool(request: ControlRequest) -> CallToolResult {
             je.code as i32,
         )),
         Err(e) => {
-            // Transport-level error — Helix may have restarted. Drop the
-            // cached handshake so the next call re-handshakes against
-            // whatever's listening now.
+            // Transport-level error — Helix may have restarted. Drop both
+            // the cached socket path and the cached handshake so the next
+            // call re-discovers and re-handshakes against whatever's
+            // listening now.
+            discovery::invalidate_socket_cache().await;
             rpc_client::invalidate_handshake_cache().await;
             tool_error(format!("Failed to communicate with Helix: {}", e))
         }

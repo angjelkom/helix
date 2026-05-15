@@ -7,6 +7,7 @@
 //! newest mtime.
 
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use std::time::Duration;
 use tokio::net::UnixStream;
 
@@ -18,6 +19,61 @@ pub enum DiscoveryError {
     NoLiveSocket(PathBuf),
     #[error("reading .helix dir: {0}")]
     Io(#[from] std::io::Error),
+}
+
+// ---------------------------------------------------------------------------
+// Socket-path cache
+// ---------------------------------------------------------------------------
+//
+// `find_helix_socket` walks .helix/, probes each candidate, and picks the
+// newest live socket. On a developer machine with accumulated orphan
+// socket files (every Helix crash leaves one behind), that's a `read_dir`
+// + several 200 ms-bounded `UnixStream::connect` probes per call. Every
+// MCP tool call paid this cost.
+//
+// Cache the result for the lifetime of the bridge process. The cache is
+// invalidated by `invalidate_socket_cache` (called from dispatch_tool on
+// transport-level errors, alongside handshake invalidation). If the
+// cached path stops existing between calls, we re-discover transparently.
+
+static SOCKET_CACHE: OnceLock<tokio::sync::Mutex<Option<PathBuf>>> = OnceLock::new();
+
+fn socket_cache() -> &'static tokio::sync::Mutex<Option<PathBuf>> {
+    SOCKET_CACHE.get_or_init(|| tokio::sync::Mutex::new(None))
+}
+
+/// Cache-checked variant of `find_helix_socket`. The first call (per
+/// process) runs full discovery and stores the result. Subsequent calls
+/// return the cached path *only if it still exists on disk*; otherwise
+/// they re-discover. Transport errors during a tool RPC should call
+/// `invalidate_socket_cache` to force the next call to re-discover even
+/// when the cached path still happens to exist (covers the case where
+/// Helix restarted with the same filename but a new PID handed out by
+/// the kernel — unlikely but cheap to defend against).
+pub async fn find_helix_socket_cached(
+    workspace_override: Option<&Path>,
+) -> Result<PathBuf, DiscoveryError> {
+    let mut guard = socket_cache().lock().await;
+    if let Some(cached) = guard.as_ref() {
+        if tokio::fs::metadata(cached).await.is_ok() {
+            return Ok(cached.clone());
+        }
+        // Cached path is gone — Helix exited cleanly or the socket
+        // file was unlinked. Fall through to fresh discovery.
+        *guard = None;
+    }
+    let resolved = find_helix_socket(workspace_override).await?;
+    *guard = Some(resolved.clone());
+    Ok(resolved)
+}
+
+/// Clear the cached socket path. dispatch_tool calls this whenever a
+/// tool RPC fails with a transport-level error, alongside the matching
+/// `invalidate_handshake_cache`. The next discovery will rebuild the
+/// cache against whatever's listening now.
+pub async fn invalidate_socket_cache() {
+    let mut guard = socket_cache().lock().await;
+    *guard = None;
 }
 
 /// Discover the live Helix control socket. Returns the path that should be
@@ -304,5 +360,71 @@ mod tests {
 
         let resolved = find_helix_socket(Some(tmp.path())).await.unwrap();
         assert_eq!(resolved, newer);
+    }
+
+    // Cache tests share the process-global SOCKET_CACHE; serialize so a
+    // late-running invalidate() doesn't race a parallel populate.
+    static CACHE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[tokio::test]
+    async fn cached_returns_same_path_on_second_call() {
+        let _lock = CACHE_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        invalidate_socket_cache().await;
+
+        let tmp = TempDir::new().unwrap();
+        let helix = tmp.path().join(".helix");
+        std::fs::create_dir(&helix).unwrap();
+        let sock = helix.join("control-cache-test.sock");
+        let _listener = UnixListener::bind(&sock).unwrap();
+
+        let first = find_helix_socket_cached(Some(tmp.path())).await.unwrap();
+        let second = find_helix_socket_cached(Some(tmp.path())).await.unwrap();
+        assert_eq!(first, second);
+        invalidate_socket_cache().await;
+    }
+
+    #[tokio::test]
+    async fn cached_re_discovers_when_path_disappears() {
+        let _lock = CACHE_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        invalidate_socket_cache().await;
+
+        let tmp = TempDir::new().unwrap();
+        let helix = tmp.path().join(".helix");
+        std::fs::create_dir(&helix).unwrap();
+        let sock = helix.join("control-disappear.sock");
+        let listener = UnixListener::bind(&sock).unwrap();
+
+        let first = find_helix_socket_cached(Some(tmp.path())).await.unwrap();
+        assert_eq!(first, sock);
+
+        // Drop the listener AND remove the file, simulating Helix exit
+        // with cleanup. The cached path no longer exists; the next
+        // call should re-discover and find nothing.
+        drop(listener);
+        std::fs::remove_file(&sock).unwrap();
+
+        let result = find_helix_socket_cached(Some(tmp.path())).await;
+        assert!(matches!(result, Err(_)));
+        invalidate_socket_cache().await;
+    }
+
+    #[tokio::test]
+    async fn invalidate_forces_re_discovery() {
+        let _lock = CACHE_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        invalidate_socket_cache().await;
+
+        let tmp = TempDir::new().unwrap();
+        let helix = tmp.path().join(".helix");
+        std::fs::create_dir(&helix).unwrap();
+        let sock = helix.join("control-invalidate.sock");
+        let _listener = UnixListener::bind(&sock).unwrap();
+
+        find_helix_socket_cached(Some(tmp.path())).await.unwrap();
+        invalidate_socket_cache().await;
+        // Cache cleared; next call re-runs discovery and finds the
+        // socket again (still listening).
+        let result = find_helix_socket_cached(Some(tmp.path())).await.unwrap();
+        assert_eq!(result, sock);
+        invalidate_socket_cache().await;
     }
 }
