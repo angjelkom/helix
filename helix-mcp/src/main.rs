@@ -33,7 +33,16 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     /// Run the stdio MCP server. Configured in Claude Code's .mcp.json.
-    Serve,
+    Serve {
+        /// Emit per-tool-call breadcrumbs on stderr (tool name, call
+        /// id, discovery+handshake outcomes). Diagnostic only — does
+        /// not change protocol behavior. Without this flag, only
+        /// WARN/ERROR logs reach stderr. May also be enabled by
+        /// setting `HELIX_MCP_VERBOSE=1` in the environment, which
+        /// avoids editing .mcp.json on every change.
+        #[arg(long)]
+        verbose: bool,
+    },
     /// Run as a Claude Code hook. Without arguments: UserPromptSubmit
     /// handler — read stdin JSON, emit wrapped snapshot if appropriate.
     /// With --reset-marker: clear the session's mtime marker so the
@@ -74,7 +83,13 @@ fn main() -> anyhow::Result<()> {
         Command::Hook { reset_marker, verbose } => hook::run(reset_marker, verbose),
         // serve and doctor speak async (rmcp stdio transport, tokio Unix
         // sockets for the bridge → Helix RPC). Build a runtime for them.
-        Command::Serve => tokio_runtime()?.block_on(serve::run()),
+        Command::Serve { verbose } => {
+            // Env-var fallback so users can flip verbose mode without
+            // re-editing their MCP client config (claude.json, codex
+            // config.toml, cursor mcp.json, …).
+            let verbose = verbose || std::env::var_os("HELIX_MCP_VERBOSE").is_some();
+            tokio_runtime()?.block_on(serve::run(verbose))
+        }
         Command::Doctor => tokio_runtime()?.block_on(doctor::run()),
     }
 }

@@ -21,7 +21,12 @@ use rmcp::{
 use crate::resources::{self, ResourceKind};
 use crate::tools::ToolKind;
 
-struct HelixMcpServer;
+struct HelixMcpServer {
+    /// `serve --verbose` (or `HELIX_MCP_VERBOSE=1` in env) — when set,
+    /// dispatch_tool emits per-call breadcrumbs to stderr. Owned by
+    /// the server because every tool call needs to read it.
+    verbose: bool,
+}
 
 /// Returned in `InitializeResult.instructions`. MCP clients feed this to
 /// the LLM as part of its system context on every session that loads
@@ -202,15 +207,22 @@ impl ServerHandler for HelixMcpServer {
             }
         };
 
-        Ok(dispatch_tool(request).await)
+        Ok(dispatch_tool(request, kind.name(), self.verbose).await)
     }
 }
 
-pub async fn run() -> Result<()> {
-    log::info!("helix-mcp serve starting");
+/// Monotonic per-process counter used by --verbose breadcrumbs to
+/// correlate "started" with "completed" log lines.
+static CALL_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+pub async fn run(verbose: bool) -> Result<()> {
+    log::info!(target: "helix_mcp::serve", "helix-mcp serve starting (verbose={})", verbose);
+    if verbose {
+        eprintln!("helix-mcp serve: starting in verbose mode");
+    }
 
     let transport = rmcp::transport::stdio();
-    let service = rmcp::serve_server(HelixMcpServer, transport).await?;
+    let service = rmcp::serve_server(HelixMcpServer { verbose }, transport).await?;
     service.waiting().await?;
 
     Ok(())
@@ -225,9 +237,22 @@ use helix_context_schema::{ControlRequest, ControlResponse};
 /// Discover the Helix socket, send `request`, format the response as an
 /// MCP tool result. Pure adapter between Phase 4a's plumbing and rmcp's
 /// tool-result type.
-async fn dispatch_tool(request: ControlRequest) -> CallToolResult {
+///
+/// `tool_name` and `verbose` are passed in so the verbose-mode
+/// breadcrumbs can include the MCP-visible tool name (more useful than
+/// the wire-level `ControlRequest` variant) and a per-process call id.
+async fn dispatch_tool(
+    request: ControlRequest,
+    tool_name: &str,
+    verbose: bool,
+) -> CallToolResult {
     use crate::{discovery, rpc_client};
     use rpc_client::{HandshakeOutcome, RpcError};
+
+    let call_id = CALL_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    if verbose {
+        eprintln!("helix-mcp dispatch #{}: tool={}", call_id, tool_name);
+    }
 
     // Cached discovery: first call runs full read_dir + connect probes;
     // subsequent calls reuse the cached path while it still exists on
@@ -235,13 +260,21 @@ async fn dispatch_tool(request: ControlRequest) -> CallToolResult {
     // restart with a different socket filename triggers re-discovery
     // on the next tool call.
     let socket = match discovery::find_helix_socket_cached(None).await {
-        Ok(s) => s,
+        Ok(s) => {
+            if verbose {
+                eprintln!("helix-mcp dispatch #{}: socket={}", call_id, s.display());
+            }
+            s
+        }
         Err(e) => {
+            if verbose {
+                eprintln!("helix-mcp dispatch #{}: discovery failed: {}", call_id, e);
+            }
             return tool_error(format!(
                 "Helix is not running in this workspace (no live control socket found): {}. \
                  Start Helix with [editor.control-socket] enabled = true.",
                 e,
-            ))
+            ));
         }
     };
 
@@ -277,13 +310,32 @@ async fn dispatch_tool(request: ControlRequest) -> CallToolResult {
     )
     .await
     {
-        Ok(resp) => format_response_as_tool_result(resp),
-        Err(RpcError::HelixError(je)) => tool_error(format!(
-            "Helix rejected the request: {} (code {})",
-            je.message,
-            je.code as i32,
-        )),
+        Ok(resp) => {
+            if verbose {
+                eprintln!("helix-mcp dispatch #{}: ok", call_id);
+            }
+            format_response_as_tool_result(resp)
+        }
+        Err(RpcError::HelixError(je)) => {
+            if verbose {
+                eprintln!(
+                    "helix-mcp dispatch #{}: helix-error code={} msg={}",
+                    call_id, je.code as i32, je.message
+                );
+            }
+            tool_error(format!(
+                "Helix rejected the request: {} (code {})",
+                je.message,
+                je.code as i32,
+            ))
+        }
         Err(e) => {
+            if verbose {
+                eprintln!(
+                    "helix-mcp dispatch #{}: transport-error {} (invalidating caches)",
+                    call_id, e
+                );
+            }
             // Transport-level error — Helix may have restarted. Drop both
             // the cached socket path and the cached handshake so the next
             // call re-discovers and re-handshakes against whatever's

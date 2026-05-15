@@ -84,8 +84,9 @@ The bridge populates the MCP `initialize` response's `instructions` field with a
 
 ## Subcommands
 
-- `helix-mcp serve` — stdio MCP server.
-- `helix-mcp hook` — UserPromptSubmit hook handler (see below).
+- `helix-mcp serve [--verbose]` — stdio MCP server. `--verbose` (or `HELIX_MCP_VERBOSE=1` in env) emits per-call breadcrumbs on stderr — useful for tracing "why did this tool call fail" without re-editing `.mcp.json` to set `RUST_LOG=debug`.
+- `helix-mcp hook [--verbose] [--reset-marker]` — UserPromptSubmit hook handler (see below).
+- `helix-mcp doctor` — five-check self-diagnosis report.
 
 ## Hook subcommand
 
