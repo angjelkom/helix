@@ -76,6 +76,7 @@ Skip navigation only when: the file is outside the workspace, the bridge is down
 - `helix_get_definition(line, column, path?)` — LSP goto-definition.
 - `helix_get_references(line, column, path?, include_declaration?)` — LSP find-references.
 - `helix_get_workspace_symbols(query)` — LSP fuzzy symbol search across the workspace. Prefer this over grep when you want a symbol, not a string.
+- `helix_buffer_read(path?, start_line?, end_line?)` — read text from a Helix buffer's *live* rope. Prefer over the standard Read tool when the user may have unsaved edits — the rope reflects what's in the editor right now, not what's on disk. Pass both start_line and end_line (1-indexed inclusive) to slice, or omit both for the whole buffer.
 - `helix_format_document(path?)` — kick off the LSP formatter. Returns `applied: true` immediately; the edits arrive asynchronously via the LSP.
 - `helix_run_command(name, args)` — execute any Helix typable command (without the leading colon). A small denylist refuses force-quits (`quit!`, `q!`, `quit-all!`, `qa!`) and shell-exec commands (`run-shell-command`, `sh`, `bang`, `!`, `pipe`, `pipe-to`) by default; everything else (`:write`, `:reload`, `:format`, `:theme`, etc.) is allowed. Use only for things the user has explicitly asked for, e.g. `{name: "write"}` to save or `{name: "reload"}` to reload from disk.
 

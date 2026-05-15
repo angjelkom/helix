@@ -390,6 +390,7 @@ async fn tools_list_returns_all_registered_tools() {
         "helix_get_definition",
         "helix_get_references",
         "helix_get_workspace_symbols",
+        "helix_buffer_read",
         "helix_format_document",
         "helix_run_command",
     ] {
@@ -400,7 +401,7 @@ async fn tools_list_returns_all_registered_tools() {
             names
         );
     }
-    assert_eq!(names.len(), 10, "expected 10 tools, got: {:?}", names);
+    assert_eq!(names.len(), 11, "expected 11 tools, got: {:?}", names);
 }
 
 #[tokio::test]
@@ -549,4 +550,44 @@ async fn tools_call_get_diagnostics_against_fake_helix() {
     assert_eq!(diags.len(), 1);
     assert_eq!(diags[0]["code"], "E0308");
     assert_eq!(diags[0]["message"], "mismatched types");
+}
+
+#[tokio::test]
+async fn tools_call_buffer_read_against_fake_helix() {
+    let canned = r#"{"method":"get-buffer-text","result":{"text":"fn main() {\n    println!(\"hello\");\n}\n","language":"rust","line_count":3}}"#.to_string() + "\n";
+    let mut h = Harness::new_with_fake_helix(&canned).await;
+    h.handshake().await;
+    let result = h.call_tool("helix_buffer_read", json!({})).await;
+    let inner = tool_result_inner(&result);
+    assert_eq!(inner["method"], "get-buffer-text");
+    assert_eq!(inner["result"]["language"], "rust");
+    assert_eq!(inner["result"]["line_count"], 3);
+}
+
+#[tokio::test]
+async fn tools_call_buffer_read_with_range() {
+    let canned = r#"{"method":"get-buffer-text","result":{"text":"line 2\nline 3\n","language":"text","line_count":2}}"#.to_string() + "\n";
+    let mut h = Harness::new_with_fake_helix(&canned).await;
+    h.handshake().await;
+    let result = h
+        .call_tool("helix_buffer_read", json!({"start_line": 2, "end_line": 3}))
+        .await;
+    let inner = tool_result_inner(&result);
+    assert_eq!(inner["result"]["line_count"], 2);
+}
+
+#[tokio::test]
+async fn tools_call_buffer_read_rejects_partial_range() {
+    // start_line without end_line is ambiguous; the parser must reject.
+    let mut h = Harness::new().await; // no fake-helix needed — fails at parse
+    h.handshake().await;
+    let result = h
+        .call_tool("helix_buffer_read", json!({"start_line": 2}))
+        .await;
+    let msg = assert_tool_error(&result);
+    assert!(
+        msg.contains("requires both") || msg.contains("Invalid arguments"),
+        "expected partial-range rejection, got: {}",
+        msg
+    );
 }
