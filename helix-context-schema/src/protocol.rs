@@ -88,6 +88,28 @@ pub struct LspDiagnostic {
     pub message: String,
 }
 
+/// Nested file outline returned by `GetDocumentSymbols`. The LSP can
+/// return either flat `SymbolInformation` lists or nested
+/// `DocumentSymbol` trees; this type always carries the nested form
+/// (flat results are wrapped with empty `children`). Mirrors LSP's
+/// `DocumentSymbol` shape but kept here to avoid a cross-crate
+/// dependency on the LSP types crate from `helix-context-schema`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DocumentSymbol {
+    pub name: String,
+    /// LSP SymbolKind as a lowercase string ("function", "class", …).
+    pub kind: String,
+    /// Full extent (declaration + body).
+    pub range: LspRange,
+    /// Subrange to highlight when navigating to this symbol —
+    /// typically just the name.
+    pub selection_range: LspRange,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub container_name: Option<String>,
+    #[serde(default)]
+    pub children: Vec<DocumentSymbol>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LspSymbolInfo {
     pub name: String,
@@ -181,6 +203,14 @@ pub enum ControlRequest {
     GetWorkspaceSymbols {
         query: String,
     },
+    /// LSP-backed file outline. Returns the symbol tree (nested) for
+    /// the named buffer or the active one. Unique value over
+    /// `GetWorkspaceSymbols`: workspace-symbols is fuzzy global search;
+    /// this is the structured outline of one file.
+    GetDocumentSymbols {
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        path: Option<String>,
+    },
     /// Return the live selections in the current (or named) buffer's
     /// active view, with rope-extracted text for each. The snapshot
     /// carries selections as `(line, column)` pairs only; this method
@@ -244,6 +274,9 @@ pub enum ControlResponse {
     },
     GetWorkspaceSymbols {
         symbols: Vec<LspSymbolInfo>,
+    },
+    GetDocumentSymbols {
+        symbols: Vec<DocumentSymbol>,
     },
     /// Response to `GetSelections`. Each entry has the anchor/head as
     /// 1-indexed positions plus the rope-extracted text. `primary_index`

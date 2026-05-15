@@ -535,6 +535,81 @@ fn flatten_workspace_symbol_response(
     }
 }
 
+/// Convert an LSP `DocumentSymbol` (nested form) to our schema's
+/// `DocumentSymbol`. Recursive — children are walked the same way.
+/// Used by `GetDocumentSymbols` when the LSP returns the nested form.
+fn lsp_document_symbol_to_schema(
+    sym: lsp::DocumentSymbol,
+) -> helix_context_schema::DocumentSymbol {
+    helix_context_schema::DocumentSymbol {
+        name: sym.name,
+        kind: lsp_symbol_kind_to_string(sym.kind),
+        range: helix_context_schema::LspRange {
+            start: helix_context_schema::LspPosition {
+                line: sym.range.start.line,
+                character: sym.range.start.character,
+            },
+            end: helix_context_schema::LspPosition {
+                line: sym.range.end.line,
+                character: sym.range.end.character,
+            },
+        },
+        selection_range: helix_context_schema::LspRange {
+            start: helix_context_schema::LspPosition {
+                line: sym.selection_range.start.line,
+                character: sym.selection_range.start.character,
+            },
+            end: helix_context_schema::LspPosition {
+                line: sym.selection_range.end.line,
+                character: sym.selection_range.end.character,
+            },
+        },
+        container_name: None,
+        children: sym
+            .children
+            .unwrap_or_default()
+            .into_iter()
+            .map(lsp_document_symbol_to_schema)
+            .collect(),
+    }
+}
+
+/// Convert an LSP `SymbolInformation` (flat form) to our schema's
+/// `DocumentSymbol`. Used as a fallback when the LSP doesn't return
+/// the nested form. Flat entries have no children and a flat list of
+/// (name, kind, location, container) — we wrap each as a leaf.
+#[allow(deprecated)]
+fn lsp_flat_symbol_to_schema(
+    sym: lsp::SymbolInformation,
+) -> helix_context_schema::DocumentSymbol {
+    helix_context_schema::DocumentSymbol {
+        name: sym.name,
+        kind: lsp_symbol_kind_to_string(sym.kind),
+        range: helix_context_schema::LspRange {
+            start: helix_context_schema::LspPosition {
+                line: sym.location.range.start.line,
+                character: sym.location.range.start.character,
+            },
+            end: helix_context_schema::LspPosition {
+                line: sym.location.range.end.line,
+                character: sym.location.range.end.character,
+            },
+        },
+        selection_range: helix_context_schema::LspRange {
+            start: helix_context_schema::LspPosition {
+                line: sym.location.range.start.line,
+                character: sym.location.range.start.character,
+            },
+            end: helix_context_schema::LspPosition {
+                line: sym.location.range.end.line,
+                character: sym.location.range.end.character,
+            },
+        },
+        container_name: sym.container_name,
+        children: Vec::new(),
+    }
+}
+
 /// Maps an LSP `SymbolKind` constant to a lowercase string for the schema.
 fn lsp_symbol_kind_to_string(kind: lsp::SymbolKind) -> String {
     use lsp::SymbolKind;
@@ -2758,6 +2833,59 @@ impl Application {
                             })
                             .collect();
                         helix_context_schema::ControlResponse::GetWorkspaceSymbols { symbols }
+                    },
+                );
+                return;
+            }
+            ControlRequest::GetDocumentSymbols { path } => {
+                let doc = match resolve_buffer(&self.editor, &workspace, path.as_deref()) {
+                    Ok(d) => d,
+                    Err(e) => {
+                        let _ = reply.send(Err(e));
+                        return;
+                    }
+                };
+                let lsp_client = doc
+                    .language_servers_with_feature(
+                        helix_core::syntax::config::LanguageServerFeature::DocumentSymbols,
+                    )
+                    .next();
+                let Some(lsp_client) = lsp_client else {
+                    let _ = reply.send(Err(JsonRpcError {
+                        code: JsonRpcErrorCode::NoLspForLanguage,
+                        message: "no LSP supporting document-symbols for this buffer".into(),
+                        data: None,
+                    }));
+                    return;
+                };
+                let future = match lsp_client.document_symbols(doc.identifier()) {
+                    Some(f) => f,
+                    None => {
+                        let _ = reply.send(Err(JsonRpcError {
+                            code: JsonRpcErrorCode::NoLspForLanguage,
+                            message: "LSP server does not support document-symbols".into(),
+                            data: None,
+                        }));
+                        return;
+                    }
+                };
+
+                spawn_lsp_request(
+                    reply,
+                    future,
+                    move |resp: Option<lsp::DocumentSymbolResponse>| {
+                        let symbols = match resp {
+                            None => Vec::new(),
+                            Some(lsp::DocumentSymbolResponse::Nested(items)) => items
+                                .into_iter()
+                                .map(lsp_document_symbol_to_schema)
+                                .collect(),
+                            Some(lsp::DocumentSymbolResponse::Flat(items)) => items
+                                .into_iter()
+                                .map(lsp_flat_symbol_to_schema)
+                                .collect(),
+                        };
+                        helix_context_schema::ControlResponse::GetDocumentSymbols { symbols }
                     },
                 );
                 return;
