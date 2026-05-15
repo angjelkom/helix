@@ -20,12 +20,24 @@ pub fn bind_socket(resolved: Resolved) -> io::Result<Binding> {
         .unwrap_or(&resolved.primary);
 
     if let Some(parent) = bind_path.parent() {
+        // Only chmod 0700 when *we* create the directory. If `.helix/`
+        // already exists, leave its permissions alone — a team that
+        // commits `.helix/config.toml` with 0755 (so teammates can read
+        // shared config) shouldn't get silently downgraded to 0700 by
+        // our bind path. On NFS / Docker volumes that don't honor mode
+        // bits, set_permissions used to return success while the
+        // filesystem default permissions persisted — silently
+        // inconsistent. Skipping the chmod when the dir was already
+        // present avoids both surprises.
+        let already_existed = parent.exists();
         std::fs::create_dir_all(parent)?;
         #[cfg(unix)]
         {
-            use std::os::unix::fs::PermissionsExt;
-            let perms = std::fs::Permissions::from_mode(0o700);
-            let _ = std::fs::set_permissions(parent, perms);
+            if !already_existed {
+                use std::os::unix::fs::PermissionsExt;
+                let perms = std::fs::Permissions::from_mode(0o700);
+                let _ = std::fs::set_permissions(parent, perms);
+            }
         }
     }
 
