@@ -102,6 +102,44 @@ pub fn write_marker_mtime(path: &Path, mtime: u64) -> io::Result<()> {
     std::fs::write(path, mtime.to_string())
 }
 
+/// Delete `marker-*` files older than `max_age` from `dir`. Best-effort:
+/// errors are ignored (the marker dir might not exist yet, perms might
+/// be wrong, etc). Returns the count of files actually removed so the
+/// caller can log it.
+///
+/// Called opportunistically from `hook::run` on the Emit path — much
+/// less frequent than Skip, so the dirent walk doesn't tax the hot path.
+pub fn prune_stale_markers(dir: &Path, max_age: std::time::Duration) -> usize {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return 0,
+    };
+    let now = std::time::SystemTime::now();
+    let mut pruned = 0;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = match path.file_name().and_then(|s| s.to_str()) {
+            Some(n) if n.starts_with("marker-") => n.to_string(),
+            _ => continue,
+        };
+        let mtime = match entry.metadata().and_then(|m| m.modified()) {
+            Ok(t) => t,
+            Err(_) => continue,
+        };
+        let age = match now.duration_since(mtime) {
+            Ok(a) => a,
+            Err(_) => continue, // mtime in the future — clock skew, skip
+        };
+        if age > max_age {
+            if std::fs::remove_file(&path).is_ok() {
+                pruned += 1;
+                log::debug!("hook: reaped stale marker {}", name);
+            }
+        }
+    }
+    pruned
+}
+
 /// Where to look for the snapshot. Priority order:
 /// 1. $CLAUDE_PROJECT_DIR/.helix/context.json
 /// 2. {input.cwd}/.helix/context.json
@@ -147,6 +185,13 @@ pub enum HookDecision {
 }
 
 const STALE_THRESHOLD_SECS: u64 = 86400; // 24h
+
+/// Marker files older than this are reaped on the next successful
+/// Emit. Picked to outlast any plausible "I paused for the weekend"
+/// gap while still bounding accumulation. If a user does resume a
+/// session whose marker just got reaped, the worst case is one extra
+/// snapshot injection on the next prompt — not a hard failure.
+const STALE_MARKER_AGE: std::time::Duration = std::time::Duration::from_secs(7 * 86400);
 
 /// Inspect the snapshot file's content and mtime against the marker, decide
 /// what to do. Pure function once the file is read; easy to test.
@@ -296,16 +341,31 @@ pub fn run(reset_marker: bool, verbose: bool) -> Result<()> {
             // Update the marker AFTER emission so a write failure here doesn't
             // suppress the actually-needed inject next time.
             let marker_p = marker_path(&input.session_id);
-            if let Err(e) = write_marker_mtime(&marker_p, snapshot_mtime) {
-                if verbose {
-                    eprintln!("helix-mcp hook: marker write failed: {}", e);
+            match write_marker_mtime(&marker_p, snapshot_mtime) {
+                Ok(()) if verbose => {
+                    eprintln!(
+                        "helix-mcp hook: wrote marker {} mtime={}",
+                        marker_p.display(),
+                        snapshot_mtime
+                    );
                 }
-                log::warn!("hook: writing marker failed: {}", e);
-            } else if verbose {
+                Ok(()) => {}
+                Err(e) => {
+                    if verbose {
+                        eprintln!("helix-mcp hook: marker write failed: {}", e);
+                    }
+                    log::warn!("hook: writing marker failed: {}", e);
+                }
+            }
+
+            // Opportunistic reap of stale markers from ended Claude
+            // Code sessions. Only on the Emit path — the much-more-
+            // frequent Skip paths shouldn't pay the dirent walk.
+            let pruned = prune_stale_markers(&marker_dir(), STALE_MARKER_AGE);
+            if verbose && pruned > 0 {
                 eprintln!(
-                    "helix-mcp hook: wrote marker {} mtime={}",
-                    marker_p.display(),
-                    snapshot_mtime
+                    "helix-mcp hook: reaped {} stale marker file(s)",
+                    pruned
                 );
             }
             Ok(())
@@ -437,6 +497,47 @@ mod tests {
         assert!(read_marker_mtime(&path).is_none());
         write_marker_mtime(&path, 1_234_567).unwrap();
         assert_eq!(read_marker_mtime(&path), Some(1_234_567));
+    }
+
+    #[test]
+    fn prune_stale_markers_removes_old_files_only() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        // Write three markers; backdate one of them past the threshold.
+        let fresh = tmp.path().join("marker-fresh-session");
+        let stale = tmp.path().join("marker-stale-session");
+        let unrelated = tmp.path().join("not-a-marker");
+        std::fs::write(&fresh, "1000").unwrap();
+        std::fs::write(&stale, "1000").unwrap();
+        std::fs::write(&unrelated, "1000").unwrap();
+
+        // Backdate the stale marker via filetime — atime+mtime to ~30
+        // days ago. The reaper checks SystemTime mtime, so this drives
+        // the stale check.
+        use filetime::{set_file_mtime, FileTime};
+        let thirty_days_ago = std::time::SystemTime::now()
+            - std::time::Duration::from_secs(30 * 86400);
+        set_file_mtime(&stale, FileTime::from_system_time(thirty_days_ago)).unwrap();
+
+        let pruned = super::prune_stale_markers(
+            tmp.path(),
+            std::time::Duration::from_secs(7 * 86400),
+        );
+
+        assert_eq!(pruned, 1, "should have reaped exactly the stale marker");
+        assert!(fresh.exists(), "fresh marker must survive");
+        assert!(!stale.exists(), "stale marker should be gone");
+        assert!(unrelated.exists(), "non-marker file should be left alone");
+    }
+
+    #[test]
+    fn prune_stale_markers_returns_zero_on_missing_dir() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let nonexistent = tmp.path().join("does-not-exist");
+        let pruned = super::prune_stale_markers(
+            &nonexistent,
+            std::time::Duration::from_secs(7 * 86400),
+        );
+        assert_eq!(pruned, 0);
     }
 
     #[test]

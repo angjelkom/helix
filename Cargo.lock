@@ -2376,6 +2376,7 @@ dependencies = [
  "anyhow",
  "clap",
  "env_logger",
+ "filetime",
  "helix-context-schema",
  "log",
  "rmcp",
