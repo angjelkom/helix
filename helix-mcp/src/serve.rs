@@ -176,8 +176,7 @@ impl ServerHandler for HelixMcpServer {
         params: CallToolRequestParams,
         _context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
-        use crate::tools::*;
-        use helix_context_schema::ControlRequest;
+        use crate::tools::ToolKind;
 
         let name = params.name.as_ref();
         let args = params.arguments.unwrap_or_default();
@@ -188,104 +187,18 @@ impl ServerHandler for HelixMcpServer {
             None => return Ok(tool_error(format!("Unknown tool: {}", name))),
         };
 
-        let request = match kind {
-            ToolKind::HelixOpenFile => {
-                match serde_json::from_value::<HelixOpenFileArgs>(args_val) {
-                    Ok(a) => ControlRequest::OpenFile {
-                        path: a.path,
-                        line: a.line,
-                        column: a.column,
-                    },
-                    Err(e) => {
-                        return Ok(tool_error(format!(
-                            "Invalid arguments for helix_open_file: {}",
-                            e
-                        )))
-                    }
-                }
-            }
-            ToolKind::HelixGotoLine => {
-                match serde_json::from_value::<HelixGotoLineArgs>(args_val) {
-                    Ok(a) => ControlRequest::GotoLine {
-                        line: a.line,
-                        column: a.column,
-                        path: a.path,
-                    },
-                    Err(e) => return Ok(tool_error(format!("Invalid arguments for helix_goto_line: {}", e))),
-                }
-            }
-            ToolKind::HelixSelect => {
-                match serde_json::from_value::<HelixSelectArgs>(args_val) {
-                    Ok(a) => ControlRequest::SelectRange {
-                        start_line: a.start_line,
-                        start_column: a.start_column,
-                        end_line: a.end_line,
-                        end_column: a.end_column,
-                        path: a.path,
-                    },
-                    Err(e) => return Ok(tool_error(format!("Invalid arguments for helix_select: {}", e))),
-                }
-            }
-            ToolKind::HelixGetDiagnostics => {
-                match serde_json::from_value::<HelixGetDiagnosticsArgs>(args_val) {
-                    Ok(a) => ControlRequest::GetDiagnostics { path: a.path },
-                    Err(e) => return Ok(tool_error(format!("Invalid arguments for helix_get_diagnostics: {}", e))),
-                }
-            }
-            ToolKind::HelixGetHover => {
-                match serde_json::from_value::<HelixPositionArgs>(args_val) {
-                    Ok(a) => ControlRequest::GetHoverAt {
-                        line: a.line,
-                        column: a.column,
-                        path: a.path,
-                        allow_insert_mode: a.allow_insert_mode,
-                    },
-                    Err(e) => return Ok(tool_error(format!("Invalid arguments for helix_get_hover: {}", e))),
-                }
-            }
-            ToolKind::HelixGetDefinition => {
-                match serde_json::from_value::<HelixPositionArgs>(args_val) {
-                    Ok(a) => ControlRequest::GetDefinitionAt {
-                        line: a.line,
-                        column: a.column,
-                        path: a.path,
-                        allow_insert_mode: a.allow_insert_mode,
-                    },
-                    Err(e) => return Ok(tool_error(format!("Invalid arguments for helix_get_definition: {}", e))),
-                }
-            }
-            ToolKind::HelixGetReferences => {
-                match serde_json::from_value::<HelixGetReferencesArgs>(args_val) {
-                    Ok(a) => ControlRequest::GetReferencesAt {
-                        line: a.line,
-                        column: a.column,
-                        path: a.path,
-                        allow_insert_mode: a.allow_insert_mode,
-                        include_declaration: a.include_declaration,
-                    },
-                    Err(e) => return Ok(tool_error(format!("Invalid arguments for helix_get_references: {}", e))),
-                }
-            }
-            ToolKind::HelixGetWorkspaceSymbols => {
-                match serde_json::from_value::<HelixGetWorkspaceSymbolsArgs>(args_val) {
-                    Ok(a) => ControlRequest::GetWorkspaceSymbols { query: a.query },
-                    Err(e) => return Ok(tool_error(format!("Invalid arguments for helix_get_workspace_symbols: {}", e))),
-                }
-            }
-            ToolKind::HelixFormatDocument => {
-                match serde_json::from_value::<HelixFormatDocumentArgs>(args_val) {
-                    Ok(a) => ControlRequest::FormatDocument { path: a.path },
-                    Err(e) => return Ok(tool_error(format!("Invalid arguments for helix_format_document: {}", e))),
-                }
-            }
-            ToolKind::HelixRunCommand => {
-                match serde_json::from_value::<HelixRunCommandArgs>(args_val) {
-                    Ok(a) => ControlRequest::RunCommand {
-                        name: a.name,
-                        args: a.args,
-                    },
-                    Err(e) => return Ok(tool_error(format!("Invalid arguments for helix_run_command: {}", e))),
-                }
+        // Per-tool dispatch lives in the TOOLS table in tools.rs:
+        // parse_request closes over the tool's Args struct and maps to
+        // the right ControlRequest variant. One line here vs the 100
+        // lines this used to be.
+        let request = match kind.parse_request(args_val) {
+            Ok(r) => r,
+            Err(e) => {
+                return Ok(tool_error(format!(
+                    "Invalid arguments for {}: {}",
+                    kind.name(),
+                    e
+                )))
             }
         };
 
