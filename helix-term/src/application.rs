@@ -789,6 +789,15 @@ impl Application {
                 Ok(resolved) => (Some(resolved), Some(rx)),
                 Err(e) => {
                     log::warn!("control-socket: failed to start: {}", e);
+                    // Also surface to the user via the status bar so an
+                    // MCP-driven session doesn't silently fail when the
+                    // user has the bridge wired up but the socket can't
+                    // bind (EADDRINUSE, EACCES, no workspace marker, …).
+                    // Matches how LSP/DAP startup failures are reported.
+                    editor.set_error(format!(
+                        "control socket failed to start: {}. Run `helix-mcp doctor` for details.",
+                        e
+                    ));
                     (None, None)
                 }
             }
