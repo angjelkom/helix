@@ -26,6 +26,7 @@ pub enum ToolKind {
     HelixGetDefinition,
     HelixGetReferences,
     HelixGetWorkspaceSymbols,
+    HelixGetSelection,
     HelixBufferRead,
     HelixFormatDocument,
     HelixRunCommand,
@@ -127,6 +128,21 @@ pub const TOOLS: &[ToolSpec] = &[
              kind, name, location.",
         schema: schemas::get_workspace_symbols,
         parse_request: parsers::get_workspace_symbols,
+    },
+    ToolSpec {
+        kind: ToolKind::HelixGetSelection,
+        name: "helix_get_selection",
+        description:
+            "Return the live selections in the current (or named) buffer's \
+             active view, with rope-extracted text for each range. Use when \
+             the user says 'fix the selected region' or 'rename what I \
+             highlighted' — the editor knows the live selection contents, \
+             which the snapshot's coordinates-only representation can't \
+             give you. Per-range text capped at 64 KiB; longer ranges are \
+             truncated with a marker. Includes the editor mode so the LLM \
+             can interpret select-vs-normal-mode semantics.",
+        schema: schemas::get_selection,
+        parse_request: parsers::get_selection,
     },
     ToolSpec {
         kind: ToolKind::HelixBufferRead,
@@ -276,6 +292,12 @@ pub struct HelixGetWorkspaceSymbolsArgs {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct HelixGetSelectionArgs {
+    #[serde(default)]
+    pub path: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct HelixBufferReadArgs {
     #[serde(default)]
     pub path: Option<String>,
@@ -413,6 +435,15 @@ mod schemas {
         })
     }
 
+    pub fn get_selection() -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "path": { "type": "string", "description": "Buffer path (optional; defaults to active)" }
+            }
+        })
+    }
+
     pub fn run_command() -> Value {
         json!({
             "type": "object",
@@ -509,6 +540,11 @@ mod parsers {
         Ok(ControlRequest::FormatDocument { path: a.path })
     }
 
+    pub fn get_selection(v: Value) -> Result<ControlRequest, serde_json::Error> {
+        let a: HelixGetSelectionArgs = serde_json::from_value(v)?;
+        Ok(ControlRequest::GetSelections { path: a.path })
+    }
+
     pub fn buffer_read(v: Value) -> Result<ControlRequest, serde_json::Error> {
         let a: HelixBufferReadArgs = serde_json::from_value(v)?;
         // The wire method takes Option<LineRange>; build one only when
@@ -557,6 +593,7 @@ mod tests {
             ToolKind::HelixGetDefinition,
             ToolKind::HelixGetReferences,
             ToolKind::HelixGetWorkspaceSymbols,
+            ToolKind::HelixGetSelection,
             ToolKind::HelixBufferRead,
             ToolKind::HelixFormatDocument,
             ToolKind::HelixRunCommand,
@@ -570,9 +607,9 @@ mod tests {
     }
 
     #[test]
-    fn all_iterates_eleven_kinds() {
+    fn all_iterates_twelve_kinds() {
         let kinds: Vec<_> = ToolKind::all().collect();
-        assert_eq!(kinds.len(), 11);
+        assert_eq!(kinds.len(), 12);
     }
 
     #[test]

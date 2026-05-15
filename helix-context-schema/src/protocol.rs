@@ -181,6 +181,15 @@ pub enum ControlRequest {
     GetWorkspaceSymbols {
         query: String,
     },
+    /// Return the live selections in the current (or named) buffer's
+    /// active view, with rope-extracted text for each. The snapshot
+    /// carries selections as `(line, column)` pairs only; this method
+    /// includes the actual selected text — useful when the user says
+    /// "fix the selected region" without quoting the content.
+    GetSelections {
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        path: Option<String>,
+    },
     FormatDocument {
         #[serde(skip_serializing_if = "Option::is_none", default)]
         path: Option<String>,
@@ -235,6 +244,16 @@ pub enum ControlResponse {
     },
     GetWorkspaceSymbols {
         symbols: Vec<LspSymbolInfo>,
+    },
+    /// Response to `GetSelections`. Each entry has the anchor/head as
+    /// 1-indexed positions plus the rope-extracted text. `primary_index`
+    /// points at which entry in `selections` is the primary cursor.
+    /// `mode` is the current editor mode ("normal", "select", …) so
+    /// the LLM can interpret the selection meaningfully.
+    GetSelections {
+        selections: Vec<crate::types::Selection>,
+        primary_index: usize,
+        mode: String,
     },
     FormatDocument {
         applied: bool,
