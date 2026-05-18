@@ -3102,6 +3102,88 @@ impl Application {
                 );
                 return;
             }
+            ControlRequest::GetJumplist {} => {
+                let view_id = self.editor.tree.focus;
+                let view = match self.editor.tree.try_get(view_id) {
+                    Some(v) => v,
+                    None => {
+                        let _ = reply.send(Err(JsonRpcError {
+                            code: JsonRpcErrorCode::NoActiveDocument,
+                            message: "no focused view".into(),
+                            data: None,
+                        }));
+                        return;
+                    }
+                };
+                let current_index = view.jumps.current_index();
+                let entries: Vec<helix_context_schema::JumpEntry> = view
+                    .jumps
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(idx, (doc_id, selection))| {
+                        let doc = self.editor.documents.get(doc_id)?;
+                        let path_buf = doc.path()?.to_path_buf();
+                        let path_abs = path_buf.to_string_lossy().into_owned();
+                        let path_rel = path_buf
+                            .strip_prefix(&workspace)
+                            .map(|p| p.to_string_lossy().into_owned())
+                            .unwrap_or_else(|_| path_abs.clone());
+                        let head = selection.primary().head;
+                        let text = doc.text();
+                        // Selection may point past the current rope (e.g. after
+                        // edits the jumplist's `apply` couldn't fully fix). Clamp
+                        // before converting so we never panic on the slice.
+                        let safe_head = head.min(text.len_chars());
+                        let pos = char_idx_to_one_indexed(text, safe_head);
+                        Some(helix_context_schema::JumpEntry {
+                            path: path_rel,
+                            path_abs,
+                            line: pos.line,
+                            column: pos.column,
+                            is_current: idx == current_index,
+                        })
+                    })
+                    .collect();
+                Ok(ControlResponse::GetJumplist {
+                    entries,
+                    current_index,
+                })
+            }
+            ControlRequest::Jump { offset } => {
+                if offset == 0 {
+                    let _ = reply.send(Ok(ControlResponse::Ok {}));
+                    return;
+                }
+                let view_id = self.editor.tree.focus;
+                if self.editor.tree.try_get(view_id).is_none() {
+                    let _ = reply.send(Err(JsonRpcError {
+                        code: JsonRpcErrorCode::NoActiveDocument,
+                        message: "no focused view".into(),
+                        data: None,
+                    }));
+                    return;
+                }
+                if offset > 0 {
+                    self.editor.jump_forward(view_id, offset as usize);
+                } else {
+                    self.editor
+                        .jump_backward(view_id, offset.unsigned_abs() as usize);
+                }
+
+                // Recenter on the cursor after the jump so the LLM can see
+                // context around the new location.
+                let scrolloff = self.editor.config().scrolloff;
+                let doc_id = self.editor.tree.get(view_id).doc;
+                if let Some(view) = self.editor.tree.try_get(view_id) {
+                    if let Some(doc) = self.editor.documents.get_mut(&doc_id) {
+                        view.ensure_cursor_in_view_center(doc, scrolloff);
+                    }
+                }
+
+                self.rewrite_snapshot_after_mcp_mutation("jump");
+                let _ = reply.send(Ok(ControlResponse::Ok {}));
+                return;
+            }
             ControlRequest::FormatDocument { path } => {
                 use crate::commands::typed::TYPABLE_COMMAND_MAP;
                 use helix_core::command_line::Args as CmdArgs;

@@ -119,6 +119,13 @@ impl JumpList {
         self.jumps.iter()
     }
 
+    /// Index into `iter()` that the user is currently positioned at.
+    /// Equals `iter().count()` when the user is at the live cursor and
+    /// not navigating history (the "past-the-end" sentinel).
+    pub fn current_index(&self) -> usize {
+        self.current
+    }
+
     /// Applies a [`Transaction`] of changes to the jumplist.
     /// This is necessary to ensure that changes to documents do not leave jump-list
     /// selections pointing to parts of the text which no longer exist.
