@@ -370,6 +370,98 @@ mod one_indexed_to_char_tests {
 }
 
 /// Returns Err(BufferModeUnsafe) if the editor is in Insert mode and the
+/// Bounded server-side cache of LSP `CodeActionOrCommand` entries
+/// returned by `GetCodeActions`. Apply paths look up an action by id
+/// here, verify the cached `doc_version` still matches the document's
+/// current `version()`, and refuse stale applies.
+///
+/// Capacity is fixed at `MAX_CACHED_CODE_ACTIONS`. When full, the
+/// oldest entries are evicted FIFO. Stale entries (doc_version drift)
+/// stay until evicted; they fail the version check on apply.
+mod code_action_cache {
+    use helix_lsp::{lsp, LanguageServerId, OffsetEncoding};
+    use helix_view::DocumentId;
+    use std::collections::BTreeMap;
+    use std::sync::Mutex;
+    use std::sync::OnceLock;
+
+    pub(super) const MAX_CACHED_CODE_ACTIONS: usize = 256;
+
+    #[derive(Debug)]
+    pub(super) struct StoredAction {
+        pub doc_id: DocumentId,
+        pub doc_version: i32,
+        pub language_server_id: LanguageServerId,
+        pub offset_encoding: OffsetEncoding,
+        pub action: lsp::CodeActionOrCommand,
+    }
+
+    struct Cache {
+        next_id: u64,
+        entries: BTreeMap<u64, StoredAction>,
+    }
+
+    static CACHE: OnceLock<Mutex<Cache>> = OnceLock::new();
+
+    fn cache() -> &'static Mutex<Cache> {
+        CACHE.get_or_init(|| {
+            Mutex::new(Cache {
+                next_id: 1,
+                entries: BTreeMap::new(),
+            })
+        })
+    }
+
+    /// Insert one action and return its newly minted id (decimal-string).
+    /// FIFO eviction once the cache exceeds capacity — the oldest
+    /// numeric ids are pruned. New ids are monotonically increasing.
+    pub(super) fn insert(action: StoredAction) -> String {
+        let mut guard = cache().lock().expect("code_action cache mutex poisoned");
+        let id = guard.next_id;
+        guard.next_id += 1;
+        guard.entries.insert(id, action);
+        while guard.entries.len() > MAX_CACHED_CODE_ACTIONS {
+            // BTreeMap is ordered by key (the u64 id), so pop_first
+            // drops the oldest minted action.
+            let _ = guard.entries.pop_first();
+        }
+        id.to_string()
+    }
+
+    /// Look up an action by id and remove it from the cache. Apply is
+    /// a one-shot — leaving stale entries around would let a second
+    /// apply succeed under a now-different doc state.
+    pub(super) fn take(action_id: &str) -> Option<StoredAction> {
+        let id: u64 = action_id.parse().ok()?;
+        let mut guard = cache().lock().expect("code_action cache mutex poisoned");
+        guard.entries.remove(&id)
+    }
+}
+
+/// `&str` to render as the action title in MCP responses. Commands
+/// carry a `title`; CodeActions also carry a `title`. Both shapes are
+/// flattened here so the handler doesn't have to match again.
+fn code_action_title(action: &lsp::CodeActionOrCommand) -> &str {
+    match action {
+        lsp::CodeActionOrCommand::Command(cmd) => &cmd.title,
+        lsp::CodeActionOrCommand::CodeAction(ca) => &ca.title,
+    }
+}
+
+fn code_action_kind(action: &lsp::CodeActionOrCommand) -> Option<&lsp::CodeActionKind> {
+    match action {
+        lsp::CodeActionOrCommand::Command(_) => None,
+        lsp::CodeActionOrCommand::CodeAction(ca) => ca.kind.as_ref(),
+    }
+}
+
+fn code_action_is_preferred(action: &lsp::CodeActionOrCommand) -> bool {
+    match action {
+        lsp::CodeActionOrCommand::Command(_) => false,
+        lsp::CodeActionOrCommand::CodeAction(ca) => ca.is_preferred.unwrap_or(false),
+    }
+}
+
 /// caller didn't pass `allow_insert_mode: true`. Used by LSP-position
 /// methods to avoid querying garbage mid-typing positions.
 fn ensure_buffer_mode_safe(
@@ -3085,6 +3177,327 @@ impl Application {
                         helix_context_schema::ControlResponse::GetDocumentSymbols { symbols }
                     },
                 );
+                return;
+            }
+            ControlRequest::GetCodeActions {
+                line,
+                column,
+                end_line,
+                end_column,
+                path,
+                only,
+                allow_insert_mode,
+            } => {
+                if let Err(e) = ensure_buffer_mode_safe(&self.editor, allow_insert_mode) {
+                    let _ = reply.send(Err(e));
+                    return;
+                }
+                let doc = match resolve_buffer(&self.editor, &workspace, path.as_deref()) {
+                    Ok(d) => d,
+                    Err(e) => {
+                        let _ = reply.send(Err(e));
+                        return;
+                    }
+                };
+                if doc.url().is_none() {
+                    let _ = reply.send(Err(JsonRpcError {
+                        code: JsonRpcErrorCode::NoActiveDocument,
+                        message: "document has no URL".into(),
+                        data: None,
+                    }));
+                    return;
+                }
+
+                let text = doc.text();
+                let start_char = one_indexed_to_char(text, line, column);
+                let end_char = match (end_line, end_column) {
+                    (Some(el), Some(ec)) => one_indexed_to_char(text, el, ec),
+                    _ => start_char,
+                };
+                let helix_range = helix_core::Range::new(start_char, end_char);
+
+                let doc_id = doc.id();
+                let doc_version = doc.version();
+                let doc_identifier = doc.identifier();
+
+                // Collect (future, ls_id, encoding) tuples from each
+                // LSP supporting code actions. CodeActionContext is
+                // built per-LSP using its own offset_encoding so the
+                // diagnostic ranges and request range line up.
+                let mut server_requests: Vec<(
+                    _,
+                    helix_lsp::LanguageServerId,
+                    helix_lsp::OffsetEncoding,
+                )> = Vec::new();
+                let mut seen_servers = std::collections::HashSet::new();
+                for language_server in doc.language_servers_with_feature(
+                    helix_core::syntax::config::LanguageServerFeature::CodeAction,
+                ) {
+                    if !seen_servers.insert(language_server.id()) {
+                        continue;
+                    }
+                    let offset_encoding = language_server.offset_encoding();
+                    let lsp_range = helix_lsp::util::range_to_lsp_range(
+                        text,
+                        helix_range,
+                        offset_encoding,
+                    );
+                    let diagnostics = doc
+                        .diagnostics()
+                        .iter()
+                        .filter(|d| {
+                            helix_range.overlaps(&helix_core::Range::new(
+                                d.range.start,
+                                d.range.end,
+                            ))
+                        })
+                        .map(|d| {
+                            helix_lsp::util::diagnostic_to_lsp_diagnostic(
+                                text,
+                                d,
+                                offset_encoding,
+                            )
+                        })
+                        .collect();
+                    let context = lsp::CodeActionContext {
+                        diagnostics,
+                        only: only.as_ref().map(|kinds| {
+                            kinds.iter().map(|k| lsp::CodeActionKind::from(k.clone())).collect()
+                        }),
+                        trigger_kind: Some(lsp::CodeActionTriggerKind::INVOKED),
+                    };
+                    let Some(fut) = language_server.code_actions(
+                        doc_identifier.clone(),
+                        lsp_range,
+                        context,
+                    ) else {
+                        continue;
+                    };
+                    server_requests.push((fut, language_server.id(), offset_encoding));
+                }
+
+                if server_requests.is_empty() {
+                    let _ = reply.send(Err(JsonRpcError {
+                        code: JsonRpcErrorCode::NoLspForLanguage,
+                        message: "no LSP supporting code actions for this document".into(),
+                        data: None,
+                    }));
+                    return;
+                }
+
+                tokio::spawn(async move {
+                    use futures_util::future::join_all;
+
+                    let raw = join_all(server_requests.into_iter().map(|(fut, ls, enc)| async move {
+                        let res = tokio::time::timeout(
+                            std::time::Duration::from_secs(10),
+                            fut,
+                        )
+                        .await;
+                        (ls, enc, res)
+                    }))
+                    .await;
+
+                    let mut all_actions: Vec<(
+                        lsp::CodeActionOrCommand,
+                        helix_lsp::LanguageServerId,
+                        helix_lsp::OffsetEncoding,
+                    )> = Vec::new();
+                    let mut last_lsp_err: Option<String> = None;
+                    let mut any_timeout = false;
+
+                    for (ls, enc, result) in raw {
+                        match result {
+                            Ok(Ok(Some(actions))) => {
+                                for a in actions {
+                                    // Filter out explicitly disabled actions
+                                    // — helix's own picker does this too.
+                                    let disabled = matches!(
+                                        &a,
+                                        lsp::CodeActionOrCommand::CodeAction(ca)
+                                            if ca.disabled.is_some()
+                                    );
+                                    if !disabled {
+                                        all_actions.push((a, ls, enc));
+                                    }
+                                }
+                            }
+                            Ok(Ok(None)) => {}
+                            Ok(Err(e)) => last_lsp_err = Some(e.to_string()),
+                            Err(_) => any_timeout = true,
+                        }
+                    }
+
+                    if all_actions.is_empty() {
+                        let resp = if any_timeout {
+                            Err(JsonRpcError {
+                                code: JsonRpcErrorCode::LspTimeout,
+                                message: "LSP code-actions request timed out after 10s".into(),
+                                data: None,
+                            })
+                        } else if let Some(e) = last_lsp_err {
+                            Err(JsonRpcError {
+                                code: JsonRpcErrorCode::InternalError,
+                                message: format!("LSP error: {}", e),
+                                data: None,
+                            })
+                        } else {
+                            Ok(ControlResponse::GetCodeActions {
+                                actions: Vec::new(),
+                            })
+                        };
+                        let _ = reply.send(resp);
+                        return;
+                    }
+
+                    // Sort by preferred-first, then by index. Heavier
+                    // VSCode-style sorting (diagnostic-fixers first,
+                    // category buckets) lives in helix-term's picker;
+                    // for an MCP caller, preferred-first is the high-
+                    // signal heuristic.
+                    all_actions.sort_by_key(|(a, _, _)| {
+                        let preferred = code_action_is_preferred(a);
+                        !preferred
+                    });
+
+                    let descriptors: Vec<helix_context_schema::CodeActionDescriptor> = all_actions
+                        .into_iter()
+                        .map(|(action, ls, enc)| {
+                            let title = code_action_title(&action).to_owned();
+                            let kind = code_action_kind(&action).map(|k| k.as_str().to_owned());
+                            let is_preferred = code_action_is_preferred(&action);
+                            let id = code_action_cache::insert(code_action_cache::StoredAction {
+                                doc_id,
+                                doc_version,
+                                language_server_id: ls,
+                                offset_encoding: enc,
+                                action,
+                            });
+                            helix_context_schema::CodeActionDescriptor {
+                                id,
+                                title,
+                                kind,
+                                is_preferred,
+                            }
+                        })
+                        .collect();
+
+                    let _ = reply.send(Ok(ControlResponse::GetCodeActions {
+                        actions: descriptors,
+                    }));
+                });
+                return;
+            }
+            ControlRequest::ApplyCodeAction { action_id } => {
+                let stored = match code_action_cache::take(&action_id) {
+                    Some(s) => s,
+                    None => {
+                        let _ = reply.send(Err(JsonRpcError {
+                            code: JsonRpcErrorCode::CodeActionUnknown,
+                            message: format!(
+                                "code action id {} not found — never minted or already evicted; \
+                                 call helix_get_code_actions again",
+                                action_id
+                            ),
+                            data: None,
+                        }));
+                        return;
+                    }
+                };
+
+                let current_version = match self.editor.documents.get(&stored.doc_id) {
+                    Some(d) => d.version(),
+                    None => {
+                        let _ = reply.send(Err(JsonRpcError {
+                            code: JsonRpcErrorCode::NoActiveDocument,
+                            message: "document was closed since the code action was issued".into(),
+                            data: None,
+                        }));
+                        return;
+                    }
+                };
+                if current_version != stored.doc_version {
+                    let _ = reply.send(Err(JsonRpcError {
+                        code: JsonRpcErrorCode::CodeActionStale,
+                        message: format!(
+                            "buffer changed since code action was issued (version {} → {}); \
+                             call helix_get_code_actions again",
+                            stored.doc_version, current_version
+                        ),
+                        data: None,
+                    }));
+                    return;
+                }
+
+                // Apply the action. For CodeAction with no inline `edit`,
+                // resolve via the LSP — helix's picker does the same.
+                let mut applied = false;
+                let message: Option<String>;
+                match &stored.action {
+                    lsp::CodeActionOrCommand::Command(command) => {
+                        message = Some(command.title.clone());
+                        self.editor
+                            .execute_lsp_command(command.clone(), stored.language_server_id);
+                        applied = true;
+                    }
+                    lsp::CodeActionOrCommand::CodeAction(code_action) => {
+                        message = Some(code_action.title.clone());
+                        let mut resolved_action: Option<lsp::CodeAction> = None;
+                        if code_action.edit.is_none() {
+                            if let Some(language_server) =
+                                self.editor.language_server_by_id(stored.language_server_id)
+                            {
+                                if let Some(future) =
+                                    language_server.resolve_code_action(code_action)
+                                {
+                                    match helix_lsp::block_on(future) {
+                                        Ok(resolved) => resolved_action = Some(resolved),
+                                        Err(e) => {
+                                            let _ = reply.send(Err(JsonRpcError {
+                                                code: JsonRpcErrorCode::InternalError,
+                                                message: format!(
+                                                    "failed to resolve code action: {}",
+                                                    e
+                                                ),
+                                                data: None,
+                                            }));
+                                            return;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        let resolved_ref =
+                            resolved_action.as_ref().unwrap_or(code_action);
+
+                        if let Some(workspace_edit) = &resolved_ref.edit {
+                            if let Err(e) = self
+                                .editor
+                                .apply_workspace_edit(stored.offset_encoding, workspace_edit)
+                            {
+                                let _ = reply.send(Err(JsonRpcError {
+                                    code: JsonRpcErrorCode::InternalError,
+                                    message: format!("failed to apply workspace edit: {:?}", e),
+                                    data: None,
+                                }));
+                                return;
+                            }
+                            applied = true;
+                        }
+                        if let Some(command) = &resolved_ref.command {
+                            self.editor.execute_lsp_command(
+                                command.clone(),
+                                stored.language_server_id,
+                            );
+                            applied = true;
+                        }
+                    }
+                }
+
+                if applied {
+                    self.rewrite_snapshot_after_mcp_mutation("apply-code-action");
+                }
+                let _ = reply.send(Ok(ControlResponse::ApplyCodeAction { applied, message }));
                 return;
             }
             ControlRequest::GetJumplist {} => {
