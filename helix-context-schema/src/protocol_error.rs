@@ -24,6 +24,12 @@ pub enum JsonRpcErrorCode {
     BufferModeUnsafe = -32003,
     NoActiveDocument = -32004,
     PathOutsideWorkspace = -32005,
+    /// Code action id was minted against an older revision of the
+    /// document. Caller should refetch via GetCodeActions.
+    CodeActionStale = -32006,
+    /// Code action id was never issued (typo, never minted, or
+    /// evicted from the bridge's bounded cache).
+    CodeActionUnknown = -32007,
 }
 
 impl Serialize for JsonRpcErrorCode {
@@ -46,6 +52,8 @@ impl<'de> Deserialize<'de> for JsonRpcErrorCode {
             -32003 => Ok(Self::BufferModeUnsafe),
             -32004 => Ok(Self::NoActiveDocument),
             -32005 => Ok(Self::PathOutsideWorkspace),
+            -32006 => Ok(Self::CodeActionStale),
+            -32007 => Ok(Self::CodeActionUnknown),
             other => Err(serde::de::Error::custom(format!(
                 "unknown JSON-RPC error code {}",
                 other

@@ -397,6 +397,8 @@ async fn tools_list_returns_all_registered_tools() {
         "helix_buffer_read",
         "helix_get_jumplist",
         "helix_jump",
+        "helix_get_code_actions",
+        "helix_apply_code_action",
         "helix_format_document",
         "helix_run_command",
     ] {
@@ -407,7 +409,7 @@ async fn tools_list_returns_all_registered_tools() {
             names
         );
     }
-    assert_eq!(names.len(), 17, "expected 17 tools, got: {:?}", names);
+    assert_eq!(names.len(), 19, "expected 19 tools, got: {:?}", names);
 }
 
 #[tokio::test]
@@ -483,6 +485,51 @@ async fn tools_call_returns_error_when_helix_not_running() {
     assert!(
         msg.contains("Helix is not running") || msg.contains("not running"),
         "expected friendly not-running message, got: {}",
+        msg
+    );
+}
+
+#[tokio::test]
+async fn tools_call_get_code_actions_against_fake_helix() {
+    let canned = r#"{"method":"get-code-actions","result":{"actions":[{"id":"1","title":"Replace with X","kind":"quickfix","is_preferred":true},{"id":"2","title":"Refactor: extract","is_preferred":false}]}}"#.to_string() + "\n";
+    let mut h = Harness::new_with_fake_helix(&canned).await;
+    h.handshake().await;
+    let result = h
+        .call_tool(
+            "helix_get_code_actions",
+            json!({"line": 5, "column": 10, "only": ["quickfix"]}),
+        )
+        .await;
+    let inner = tool_result_inner(&result);
+    let actions = inner["result"]["actions"].as_array().unwrap();
+    assert_eq!(actions.len(), 2);
+    assert_eq!(actions[0]["id"], "1");
+    assert_eq!(actions[0]["is_preferred"], true);
+    assert_eq!(actions[1]["kind"].is_null(), true);
+}
+
+#[tokio::test]
+async fn tools_call_apply_code_action_against_fake_helix() {
+    let canned = r#"{"method":"apply-code-action","result":{"applied":true,"message":"Replace with X"}}"#.to_string() + "\n";
+    let mut h = Harness::new_with_fake_helix(&canned).await;
+    h.handshake().await;
+    let result = h
+        .call_tool("helix_apply_code_action", json!({"action_id": "1"}))
+        .await;
+    let inner = tool_result_inner(&result);
+    assert_eq!(inner["result"]["applied"], true);
+    assert_eq!(inner["result"]["message"], "Replace with X");
+}
+
+#[tokio::test]
+async fn tools_call_apply_code_action_requires_action_id() {
+    let mut h = Harness::new().await;
+    h.handshake().await;
+    let result = h.call_tool("helix_apply_code_action", json!({})).await;
+    let msg = assert_tool_error(&result);
+    assert!(
+        msg.contains("action_id") || msg.contains("missing"),
+        "expected missing-action_id message, got: {}",
         msg
     );
 }
