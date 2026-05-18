@@ -395,6 +395,8 @@ async fn tools_list_returns_all_registered_tools() {
         "helix_get_signature_help",
         "helix_get_selection",
         "helix_buffer_read",
+        "helix_get_jumplist",
+        "helix_jump",
         "helix_format_document",
         "helix_run_command",
     ] {
@@ -405,7 +407,7 @@ async fn tools_list_returns_all_registered_tools() {
             names
         );
     }
-    assert_eq!(names.len(), 15, "expected 15 tools, got: {:?}", names);
+    assert_eq!(names.len(), 17, "expected 17 tools, got: {:?}", names);
 }
 
 #[tokio::test]
@@ -481,6 +483,43 @@ async fn tools_call_returns_error_when_helix_not_running() {
     assert!(
         msg.contains("Helix is not running") || msg.contains("not running"),
         "expected friendly not-running message, got: {}",
+        msg
+    );
+}
+
+#[tokio::test]
+async fn tools_call_get_jumplist_against_fake_helix() {
+    let canned = r#"{"method":"get-jumplist","result":{"entries":[{"path":"main.rs","path_abs":"/work/main.rs","line":1,"column":1,"is_current":false},{"path":"main.rs","path_abs":"/work/main.rs","line":42,"column":3,"is_current":true}],"current_index":1}}"#.to_string() + "\n";
+    let mut h = Harness::new_with_fake_helix(&canned).await;
+    h.handshake().await;
+    let result = h.call_tool("helix_get_jumplist", json!({})).await;
+    let inner = tool_result_inner(&result);
+    assert_eq!(inner["method"], "get-jumplist");
+    let entries = inner["result"]["entries"].as_array().unwrap();
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries[1]["is_current"], true);
+    assert_eq!(inner["result"]["current_index"], 1);
+}
+
+#[tokio::test]
+async fn tools_call_jump_against_fake_helix() {
+    let canned = r#"{"method":"ok","result":{}}"#.to_string() + "\n";
+    let mut h = Harness::new_with_fake_helix(&canned).await;
+    h.handshake().await;
+    let result = h.call_tool("helix_jump", json!({"offset": -1})).await;
+    let inner = tool_result_inner(&result);
+    assert_eq!(inner["ok"], true);
+}
+
+#[tokio::test]
+async fn tools_call_jump_requires_offset() {
+    let mut h = Harness::new().await;
+    h.handshake().await;
+    let result = h.call_tool("helix_jump", json!({})).await;
+    let msg = assert_tool_error(&result);
+    assert!(
+        msg.contains("offset") || msg.contains("missing"),
+        "expected missing-offset message, got: {}",
         msg
     );
 }

@@ -100,6 +100,20 @@ pub struct LspDiagnostic {
     pub message: String,
 }
 
+/// One entry in the jumplist returned by `GetJumplist`. Each entry is
+/// a (file, cursor position) tuple representing where the user has
+/// been. `is_current` flags the entry the user is currently at;
+/// `helix_jump` with an offset moves relative to that index.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JumpEntry {
+    /// Workspace-relative path when possible, otherwise absolute.
+    pub path: String,
+    pub path_abs: String,
+    pub line: usize,
+    pub column: usize,
+    pub is_current: bool,
+}
+
 /// One signature returned by `GetSignatureHelp`. Mirrors LSP's
 /// `SignatureInformation` with documentation flattened from
 /// `MarkupContent`/`String` variants to plain text, and parameter
@@ -284,6 +298,17 @@ pub enum ControlRequest {
         #[serde(skip_serializing_if = "Option::is_none", default)]
         path: Option<String>,
     },
+    /// Read the active view's jumplist: an ordered history of cursor
+    /// positions the user has jumped to or from. Use to retrace where
+    /// the user has been, or as a precursor to `Jump` for relative
+    /// navigation.
+    GetJumplist {},
+    /// Move the active view's cursor along the jumplist. Negative
+    /// offsets go backward through history, positive forward. `offset:
+    /// 0` is a no-op. Behaves like Ctrl-O / Ctrl-I in vim.
+    Jump {
+        offset: i32,
+    },
     FormatDocument {
         #[serde(skip_serializing_if = "Option::is_none", default)]
         path: Option<String>,
@@ -358,6 +383,14 @@ pub enum ControlResponse {
         selections: Vec<crate::types::Selection>,
         primary_index: usize,
         mode: String,
+    },
+    /// Response to `GetJumplist`. `entries` is ordered oldest → newest
+    /// in jumplist history. `current_index` is which entry the user is
+    /// currently at; `entries[current_index].is_current` is true. The
+    /// list may be empty if the user has not jumped yet in this view.
+    GetJumplist {
+        entries: Vec<JumpEntry>,
+        current_index: usize,
     },
     FormatDocument {
         applied: bool,
