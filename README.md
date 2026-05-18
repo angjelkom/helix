@@ -165,7 +165,7 @@ The exact path may vary by Gemini CLI version — check `gemini --help` or your 
 
 ### Other clients
 
-Any agent that supports stdio MCP servers should accept the same `command: "helix-mcp", args: ["serve"]` shape. Cline, Continue, Zed, and the various VS Code MCP extensions all follow the same convention. If your agent surfaces an MCP debug page, it should show `helix` as connected with three resources and ten tools after the server registers.
+Any agent that supports stdio MCP servers should accept the same `command: "helix-mcp", args: ["serve"]` shape. Cline, Continue, Zed, and the various VS Code MCP extensions all follow the same convention. If your agent surfaces an MCP debug page, it should show `helix` as connected with three resources and nineteen tools after the server registers.
 
 ## Claude Code hooks (optional — for proactive context injection)
 
@@ -219,11 +219,20 @@ Tools (live RPC to the editor):
 | `helix_open_file` | Open a file in Helix. Optional `line`/`column` jump and center the view (useful as a "show me where you're about to edit" call). |
 | `helix_goto_line` | Move cursor to a 1-indexed line/column; view recenters on the line. |
 | `helix_select` | Select a range from `(start_line, start_column)` to `(end_line, end_column)`; view recenters. |
+| `helix_multi_select` | Set N selections at once. Helix's multi-cursor model is the engine of the editor — every command operates on it. Use for structural edits ("select every `Foo::new` call, then run a command"). |
 | `helix_get_diagnostics` | LSP diagnostics for a buffer. |
 | `helix_get_hover` | LSP hover at a position. |
 | `helix_get_definition` | LSP goto-definition. |
 | `helix_get_references` | LSP find-references. |
 | `helix_get_workspace_symbols` | LSP workspace symbol search. |
+| `helix_get_document_symbols` | LSP-backed file outline (functions, methods, classes, fields) as a nested tree. Tree-sitter knows the structure where regex doesn't. |
+| `helix_get_signature_help` | LSP function-call signature with active-parameter index. Designed for mid-typing — `allow_insert_mode` defaults to true. |
+| `helix_get_selection` | Live selections in the active view with rope-extracted text. Use when the user says "fix the selected region" without quoting the content. |
+| `helix_buffer_read` | Read text from a Helix buffer's *live* rope. Prefer over the standard Read tool when the user may have unsaved edits — the rope reflects what's in the editor right now, not what's on disk. |
+| `helix_get_jumplist` | Ordered history of cursor positions the user has visited. `is_current` flags where they are now. |
+| `helix_jump` | Step along the jumplist by N entries. Negative is backward (vim Ctrl-O), positive forward (Ctrl-I). |
+| `helix_get_code_actions` | List LSP code actions (quick-fixes, refactors, organize-imports) at a position or range. Pair with `helix_apply_code_action`. |
+| `helix_apply_code_action` | Apply a code action by opaque id. Errors with `CodeActionStale (-32006)` if the buffer changed since the id was issued. |
 | `helix_format_document` | Format a buffer via its LSP formatter. |
 | `helix_run_command` | Execute any Helix typable command. **Powerful** — can `:write`, `:reload`, `:run-shell-command`, etc. See spec §10b. |
 
