@@ -391,6 +391,7 @@ async fn tools_list_returns_all_registered_tools() {
         "helix_get_references",
         "helix_get_workspace_symbols",
         "helix_get_document_symbols",
+        "helix_get_signature_help",
         "helix_get_selection",
         "helix_buffer_read",
         "helix_format_document",
@@ -403,7 +404,7 @@ async fn tools_list_returns_all_registered_tools() {
             names
         );
     }
-    assert_eq!(names.len(), 13, "expected 13 tools, got: {:?}", names);
+    assert_eq!(names.len(), 14, "expected 14 tools, got: {:?}", names);
 }
 
 #[tokio::test]
@@ -576,6 +577,22 @@ async fn tools_call_buffer_read_with_range() {
         .await;
     let inner = tool_result_inner(&result);
     assert_eq!(inner["result"]["line_count"], 2);
+}
+
+#[tokio::test]
+async fn tools_call_get_signature_help_against_fake_helix() {
+    let canned = r#"{"method":"get-signature-help","result":{"signatures":[{"label":"fn open(path: &Path) -> io::Result<File>","documentation":"Opens a file in read-only mode.","parameters":[{"label":"path: &Path"}]}],"active_signature":0,"active_parameter":0}}"#.to_string() + "\n";
+    let mut h = Harness::new_with_fake_helix(&canned).await;
+    h.handshake().await;
+    let result = h
+        .call_tool("helix_get_signature_help", json!({"line": 5, "column": 10}))
+        .await;
+    let inner = tool_result_inner(&result);
+    assert_eq!(inner["method"], "get-signature-help");
+    let sigs = inner["result"]["signatures"].as_array().unwrap();
+    assert_eq!(sigs.len(), 1);
+    assert!(sigs[0]["label"].as_str().unwrap().contains("fn open"));
+    assert_eq!(inner["result"]["active_parameter"], 0);
 }
 
 #[tokio::test]

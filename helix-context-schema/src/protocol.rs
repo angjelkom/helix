@@ -88,6 +88,31 @@ pub struct LspDiagnostic {
     pub message: String,
 }
 
+/// One signature returned by `GetSignatureHelp`. Mirrors LSP's
+/// `SignatureInformation` with documentation flattened from
+/// `MarkupContent`/`String` variants to plain text, and parameter
+/// labels resolved to strings (LSP allows offset-into-label form;
+/// we resolve at the bridge so consumers don't need to).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LspSignatureInfo {
+    pub label: String,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub documentation: Option<String>,
+    #[serde(default)]
+    pub parameters: Vec<LspParameterInfo>,
+    /// Per-signature active-parameter index (LSP 3.16+). When set,
+    /// overrides the top-level `active_parameter` for this signature.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub active_parameter: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LspParameterInfo {
+    pub label: String,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub documentation: Option<String>,
+}
+
 /// Nested file outline returned by `GetDocumentSymbols`. The LSP can
 /// return either flat `SymbolInformation` lists or nested
 /// `DocumentSymbol` trees; this type always carries the nested form
@@ -203,6 +228,19 @@ pub enum ControlRequest {
     GetWorkspaceSymbols {
         query: String,
     },
+    /// LSP signature help at a 1-indexed (line, column) position. Use
+    /// when writing a function call to surface the LSP-resolved
+    /// argument order. Defaults `allow_insert_mode: true` because
+    /// signature help is most useful mid-typing — unlike hover/definition,
+    /// the LSP is designed to be called between keystrokes.
+    GetSignatureHelp {
+        line: usize,
+        column: usize,
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        path: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        allow_insert_mode: Option<bool>,
+    },
     /// LSP-backed file outline. Returns the symbol tree (nested) for
     /// the named buffer or the active one. Unique value over
     /// `GetWorkspaceSymbols`: workspace-symbols is fuzzy global search;
@@ -277,6 +315,13 @@ pub enum ControlResponse {
     },
     GetDocumentSymbols {
         symbols: Vec<DocumentSymbol>,
+    },
+    GetSignatureHelp {
+        signatures: Vec<LspSignatureInfo>,
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        active_signature: Option<u32>,
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        active_parameter: Option<u32>,
     },
     /// Response to `GetSelections`. Each entry has the anchor/head as
     /// 1-indexed positions plus the rope-extracted text. `primary_index`
