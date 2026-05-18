@@ -21,6 +21,7 @@ pub enum ToolKind {
     HelixOpenFile,
     HelixGotoLine,
     HelixSelect,
+    HelixMultiSelect,
     HelixGetDiagnostics,
     HelixGetHover,
     HelixGetDefinition,
@@ -81,6 +82,21 @@ pub const TOOLS: &[ToolSpec] = &[
              When path is given, switches to that buffer first.",
         schema: schemas::select,
         parse_request: parsers::select,
+    },
+    ToolSpec {
+        kind: ToolKind::HelixMultiSelect,
+        name: "helix_multi_select",
+        description:
+            "Replace the buffer's selection with N ranges. Helix's whole editing \
+             model is multi-selection — every command operates on it — so this \
+             unlocks structural edits a single helix_select can't express \
+             (e.g., select every Foo::new() in the file, then helix_run_command \
+             to replace them all). Pass `ranges` as an array of \
+             { start_line, start_column, end_line, end_column } (all 1-indexed \
+             inclusive). `primary_index` (default 0) selects which range becomes \
+             the primary cursor. Overlapping ranges are auto-merged by Helix.",
+        schema: schemas::multi_select,
+        parse_request: parsers::multi_select,
     },
     ToolSpec {
         kind: ToolKind::HelixGetDiagnostics,
@@ -290,6 +306,15 @@ pub struct HelixSelectArgs {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct HelixMultiSelectArgs {
+    pub ranges: Vec<helix_context_schema::RangeSpec>,
+    #[serde(default)]
+    pub primary_index: Option<usize>,
+    #[serde(default)]
+    pub path: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct HelixGetDiagnosticsArgs {
     #[serde(default)]
     pub path: Option<String>,
@@ -397,6 +422,31 @@ mod schemas {
                 "path": { "type": "string", "description": "Buffer path (optional; defaults to active buffer). Must already be open." }
             },
             "required": ["line"]
+        })
+    }
+
+    pub fn multi_select() -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "ranges": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "start_line": { "type": "integer", "minimum": 1 },
+                            "start_column": { "type": "integer", "minimum": 1 },
+                            "end_line": { "type": "integer", "minimum": 1 },
+                            "end_column": { "type": "integer", "minimum": 1 }
+                        },
+                        "required": ["start_line", "start_column", "end_line", "end_column"]
+                    }
+                },
+                "primary_index": { "type": "integer", "minimum": 0, "description": "Default 0; index of the range that becomes the primary cursor" },
+                "path": { "type": "string", "description": "Buffer path (optional; defaults to active)" }
+            },
+            "required": ["ranges"]
         })
     }
 
@@ -552,6 +602,15 @@ mod parsers {
         })
     }
 
+    pub fn multi_select(v: Value) -> Result<ControlRequest, serde_json::Error> {
+        let a: HelixMultiSelectArgs = serde_json::from_value(v)?;
+        Ok(ControlRequest::SelectMulti {
+            ranges: a.ranges,
+            primary_index: a.primary_index,
+            path: a.path,
+        })
+    }
+
     pub fn select(v: Value) -> Result<ControlRequest, serde_json::Error> {
         let a: HelixSelectArgs = serde_json::from_value(v)?;
         Ok(ControlRequest::SelectRange {
@@ -672,6 +731,7 @@ mod tests {
             ToolKind::HelixOpenFile,
             ToolKind::HelixGotoLine,
             ToolKind::HelixSelect,
+            ToolKind::HelixMultiSelect,
             ToolKind::HelixGetDiagnostics,
             ToolKind::HelixGetHover,
             ToolKind::HelixGetDefinition,
@@ -693,9 +753,9 @@ mod tests {
     }
 
     #[test]
-    fn all_iterates_fourteen_kinds() {
+    fn all_iterates_fifteen_kinds() {
         let kinds: Vec<_> = ToolKind::all().collect();
-        assert_eq!(kinds.len(), 14);
+        assert_eq!(kinds.len(), 15);
     }
 
     #[test]

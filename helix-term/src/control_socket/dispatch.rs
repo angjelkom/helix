@@ -27,6 +27,7 @@ pub fn try_dispatch_inline(
         | ControlRequest::OpenFile { .. }
         | ControlRequest::GotoLine { .. }
         | ControlRequest::SelectRange { .. }
+        | ControlRequest::SelectMulti { .. }
         | ControlRequest::GetDiagnostics { .. }
         | ControlRequest::GetHoverAt { .. }
         | ControlRequest::GetDefinitionAt { .. }
@@ -79,6 +80,7 @@ fn handle_initialize(
                 "open-file".into(),
                 "goto-line".into(),
                 "select-range".into(),
+                "select-multi".into(),
                 "format-document".into(),
                 "run-command".into(),
             ],

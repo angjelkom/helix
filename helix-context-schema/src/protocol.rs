@@ -42,6 +42,18 @@ pub struct LineRange {
     pub end_line: usize,
 }
 
+/// 1-indexed inclusive (line, column) → (line, column) range. Used by
+/// `SelectMulti` to specify each member of a multi-selection. `start`
+/// becomes the range's anchor, `end` its head. Same coordinate
+/// semantics as `SelectRange`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RangeSpec {
+    pub start_line: usize,
+    pub start_column: usize,
+    pub end_line: usize,
+    pub end_column: usize,
+}
+
 /// 0-indexed position. Matches LSP's `Position` semantics. Distinct from
 /// `helix_context_schema::Position` (1-indexed, user-facing).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -192,6 +204,20 @@ pub enum ControlRequest {
         start_column: usize,
         end_line: usize,
         end_column: usize,
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        path: Option<String>,
+    },
+    /// Replace the buffer's selection with N ranges (Helix's multi-
+    /// selection is the engine of the editor — every command operates
+    /// on it, so this unlocks scaffold edits a single `SelectRange`
+    /// can't express). Ranges with the same anchor are auto-merged by
+    /// `Selection::new`. Range list must be non-empty; the entry at
+    /// `primary_index` becomes the primary cursor. View recenters on
+    /// the primary's head.
+    SelectMulti {
+        ranges: Vec<RangeSpec>,
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        primary_index: Option<usize>,
         #[serde(skip_serializing_if = "Option::is_none", default)]
         path: Option<String>,
     },
