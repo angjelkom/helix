@@ -571,13 +571,13 @@ A practical sequencing that minimizes rebase pain and lets each ship independent
 12. §6.4 + §6.5 + §6.6 (marker reaping, .helix permissions, mtime tiebreak).
 13. §7.3 (buffer_read) + §7.1 (get_selection) + §7.4 (document_symbols) — the cheap-and-clear set.
 
-**Sprint 4 (new wire methods + bigger features):**
+**Sprint 4 (new wire methods + bigger features) — SHIPPED:**
 
-14. §7.2 (multi_select).
-15. §7.5 (code_actions + apply).
-16. §7.6 (signature_help).
-17. §7.7 (jumplist).
-18. §6.2 (doctor config-file checks).
+14. §7.2 (multi_select) — ✅ dca263109.
+15. §7.5 (code_actions + apply) — ✅ 5fee7be77.
+16. §7.6 (signature_help) — ✅ bb4b3cda1.
+17. §7.7 (jumplist) — ✅ f593f6305.
+18. §6.2 (doctor config-file checks) — ✅ 716b34bc6.
 
 **Phase 8 (speculative / opinionated):**
 
