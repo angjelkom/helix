@@ -33,6 +33,7 @@ pub fn try_dispatch_inline(
         | ControlRequest::GetReferencesAt { .. }
         | ControlRequest::GetWorkspaceSymbols { .. }
         | ControlRequest::GetDocumentSymbols { .. }
+        | ControlRequest::GetSignatureHelp { .. }
         | ControlRequest::FormatDocument { .. }
         | ControlRequest::RunCommand { .. } => None,
     }
@@ -71,6 +72,7 @@ fn handle_initialize(
                 "get-references-at".into(),
                 "get-workspace-symbols".into(),
                 "get-document-symbols".into(),
+                "get-signature-help".into(),
                 "get-selections".into(),
             ],
             write_methods: vec![

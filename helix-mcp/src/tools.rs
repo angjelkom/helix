@@ -27,6 +27,7 @@ pub enum ToolKind {
     HelixGetReferences,
     HelixGetWorkspaceSymbols,
     HelixGetDocumentSymbols,
+    HelixGetSignatureHelp,
     HelixGetSelection,
     HelixBufferRead,
     HelixFormatDocument,
@@ -143,6 +144,21 @@ pub const TOOLS: &[ToolSpec] = &[
              Returns a nested tree; children belong to their parent's range.",
         schema: schemas::get_document_symbols,
         parse_request: parsers::get_document_symbols,
+    },
+    ToolSpec {
+        kind: ToolKind::HelixGetSignatureHelp,
+        name: "helix_get_signature_help",
+        description:
+            "LSP signature help at a 1-indexed (line, column) position. Returns \
+             function-call overloads with parameter labels and the active \
+             parameter index. Unlike hover, this is designed to be called \
+             mid-typing (allow_insert_mode defaults to true). Use when writing \
+             a function call and you need the LSP-resolved argument order in \
+             context — most useful for languages with overloaded functions, \
+             complex generics, or builder patterns where hover docs aren't \
+             enough.",
+        schema: schemas::get_signature_help,
+        parse_request: parsers::get_signature_help,
     },
     ToolSpec {
         kind: ToolKind::HelixGetSelection,
@@ -313,6 +329,16 @@ pub struct HelixGetDocumentSymbolsArgs {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct HelixGetSignatureHelpArgs {
+    pub line: usize,
+    pub column: usize,
+    #[serde(default)]
+    pub path: Option<String>,
+    #[serde(default)]
+    pub allow_insert_mode: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct HelixGetSelectionArgs {
     #[serde(default)]
     pub path: Option<String>,
@@ -474,6 +500,19 @@ mod schemas {
         })
     }
 
+    pub fn get_signature_help() -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "line": { "type": "integer", "minimum": 1, "description": "1-indexed line number" },
+                "column": { "type": "integer", "minimum": 1, "description": "1-indexed column number" },
+                "path": { "type": "string", "description": "Buffer path (optional; defaults to active)" },
+                "allow_insert_mode": { "type": "boolean", "description": "Default true (signature help is designed for mid-typing). Pass false to opt back into the BufferModeUnsafe refusal." }
+            },
+            "required": ["line", "column"]
+        })
+    }
+
     pub fn run_command() -> Value {
         json!({
             "type": "object",
@@ -580,6 +619,16 @@ mod parsers {
         Ok(ControlRequest::GetDocumentSymbols { path: a.path })
     }
 
+    pub fn get_signature_help(v: Value) -> Result<ControlRequest, serde_json::Error> {
+        let a: HelixGetSignatureHelpArgs = serde_json::from_value(v)?;
+        Ok(ControlRequest::GetSignatureHelp {
+            line: a.line,
+            column: a.column,
+            path: a.path,
+            allow_insert_mode: a.allow_insert_mode,
+        })
+    }
+
     pub fn buffer_read(v: Value) -> Result<ControlRequest, serde_json::Error> {
         let a: HelixBufferReadArgs = serde_json::from_value(v)?;
         // The wire method takes Option<LineRange>; build one only when
@@ -629,6 +678,7 @@ mod tests {
             ToolKind::HelixGetReferences,
             ToolKind::HelixGetWorkspaceSymbols,
             ToolKind::HelixGetDocumentSymbols,
+            ToolKind::HelixGetSignatureHelp,
             ToolKind::HelixGetSelection,
             ToolKind::HelixBufferRead,
             ToolKind::HelixFormatDocument,
@@ -643,9 +693,9 @@ mod tests {
     }
 
     #[test]
-    fn all_iterates_thirteen_kinds() {
+    fn all_iterates_fourteen_kinds() {
         let kinds: Vec<_> = ToolKind::all().collect();
-        assert_eq!(kinds.len(), 13);
+        assert_eq!(kinds.len(), 14);
     }
 
     #[test]
