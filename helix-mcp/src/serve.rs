@@ -71,6 +71,7 @@ Skip navigation only when: the file is outside the workspace, the bridge is down
 - `helix_open_file(path, line?, column?)` — open and optionally jump-and-center. Path may be absolute or workspace-relative.
 - `helix_goto_line(line, column?, path?)` — move cursor; view recenters on the line.
 - `helix_select(start_line, start_column, end_line, end_column, path?)` — select a range; view recenters on the head. 1-indexed inclusive.
+- `helix_multi_select(ranges, primary_index?, path?)` — set N selections at once. Helix's multi-cursor model is the engine of the editor — every command operates on it. Use this for structural edits ("select every Foo::new call, then helix_run_command to replace them all"). `ranges` is an array of `{start_line, start_column, end_line, end_column}`; overlapping ranges auto-merge.
 - `helix_get_diagnostics(path?)` — LSP diagnostics for a buffer. Cheaper than running a separate type-check command.
 - `helix_get_hover(line, column, path?)` — LSP hover info.
 - `helix_get_definition(line, column, path?)` — LSP goto-definition.

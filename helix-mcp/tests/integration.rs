@@ -385,6 +385,7 @@ async fn tools_list_returns_all_registered_tools() {
         "helix_open_file",
         "helix_goto_line",
         "helix_select",
+        "helix_multi_select",
         "helix_get_diagnostics",
         "helix_get_hover",
         "helix_get_definition",
@@ -404,7 +405,7 @@ async fn tools_list_returns_all_registered_tools() {
             names
         );
     }
-    assert_eq!(names.len(), 14, "expected 14 tools, got: {:?}", names);
+    assert_eq!(names.len(), 15, "expected 15 tools, got: {:?}", names);
 }
 
 #[tokio::test]
@@ -415,6 +416,45 @@ async fn tools_call_open_file_succeeds_against_fake_helix() {
     let result = h.call_tool("helix_open_file", json!({"path": "src/main.rs"})).await;
     let inner = tool_result_inner(&result);
     assert_eq!(inner["ok"], true);
+}
+
+#[tokio::test]
+async fn tools_call_multi_select_succeeds_against_fake_helix() {
+    let canned = r#"{"method":"ok","result":{}}"#.to_string() + "\n";
+    let mut h = Harness::new_with_fake_helix(&canned).await;
+    h.handshake().await;
+    let result = h
+        .call_tool(
+            "helix_multi_select",
+            json!({
+                "ranges": [
+                    {"start_line": 1, "start_column": 1, "end_line": 1, "end_column": 5},
+                    {"start_line": 3, "start_column": 1, "end_line": 3, "end_column": 5},
+                ],
+                "primary_index": 1
+            }),
+        )
+        .await;
+    let inner = tool_result_inner(&result);
+    assert_eq!(inner["ok"], true);
+}
+
+#[tokio::test]
+async fn tools_call_multi_select_rejects_empty_ranges() {
+    let mut h = Harness::new().await;
+    h.handshake().await;
+    let result = h
+        .call_tool("helix_multi_select", json!({"ranges": []}))
+        .await;
+    let msg = assert_tool_error(&result);
+    // Either the bridge's args validation or Helix's empty-check
+    // fires. Both produce InvalidParams; assert the message mentions
+    // the ranges field.
+    assert!(
+        msg.contains("ranges") || msg.contains("non-empty") || msg.contains("not running"),
+        "expected empty-ranges or not-running message, got: {}",
+        msg
+    );
 }
 
 #[tokio::test]

@@ -2527,6 +2527,84 @@ impl Application {
                 let _ = reply.send(Ok(ControlResponse::Ok {}));
                 return;
             }
+            ControlRequest::SelectMulti { ranges, primary_index, path } => {
+                if ranges.is_empty() {
+                    let _ = reply.send(Err(JsonRpcError {
+                        code: JsonRpcErrorCode::InvalidParams,
+                        message: "ranges must be non-empty".into(),
+                        data: None,
+                    }));
+                    return;
+                }
+                let primary_idx = primary_index.unwrap_or(0);
+                if primary_idx >= ranges.len() {
+                    let _ = reply.send(Err(JsonRpcError {
+                        code: JsonRpcErrorCode::InvalidParams,
+                        message: format!(
+                            "primary_index {} out of bounds for {} ranges",
+                            primary_idx,
+                            ranges.len()
+                        ),
+                        data: None,
+                    }));
+                    return;
+                }
+
+                let doc_id = match resolve_buffer(&self.editor, &workspace, path.as_deref()) {
+                    Ok(d) => d.id(),
+                    Err(e) => {
+                        let _ = reply.send(Err(e));
+                        return;
+                    }
+                };
+                let view_id = self.editor.tree.focus;
+                if self.editor.tree.try_get(view_id).is_some()
+                    && self.editor.documents.get(&doc_id).is_some()
+                {
+                    self.editor.switch(doc_id, helix_view::editor::Action::Replace);
+                }
+                let view_id = self.editor.tree.focus;
+                let doc = match self.editor.documents.get_mut(&doc_id) {
+                    Some(d) => d,
+                    None => {
+                        let _ = reply.send(Err(JsonRpcError {
+                            code: JsonRpcErrorCode::NoActiveDocument,
+                            message: "document gone after switch".into(),
+                            data: None,
+                        }));
+                        return;
+                    }
+                };
+                let text = doc.text();
+                let mut selection: helix_core::Selection = ranges
+                    .iter()
+                    .map(|r| {
+                        let anchor = one_indexed_to_char(text, r.start_line, r.start_column);
+                        let head = one_indexed_to_char(text, r.end_line, r.end_column);
+                        helix_core::Range::new(anchor, head)
+                    })
+                    .collect();
+                // `FromIterator` defaults the primary to 0; reset it if
+                // the caller asked for a different range to be primary.
+                // Selection::new auto-merges overlapping ranges so the
+                // resulting count may be smaller than the input; clamp.
+                let final_primary = primary_idx.min(selection.ranges().len().saturating_sub(1));
+                selection.set_primary_index(final_primary);
+                doc.set_selection(view_id, selection);
+
+                // Recenter on the primary's head.
+                let scrolloff = self.editor.config().scrolloff;
+                if let Some(view) = self.editor.tree.try_get(view_id) {
+                    if let Some(doc) = self.editor.documents.get_mut(&doc_id) {
+                        view.ensure_cursor_in_view_center(doc, scrolloff);
+                    }
+                }
+
+                self.rewrite_snapshot_after_mcp_mutation("select-multi");
+
+                let _ = reply.send(Ok(ControlResponse::Ok {}));
+                return;
+            }
             ControlRequest::GetDiagnostics { path } => {
                 let doc = match resolve_buffer(&self.editor, &workspace, path.as_deref()) {
                     Ok(d) => d,
