@@ -535,6 +535,54 @@ fn flatten_workspace_symbol_response(
     }
 }
 
+/// Convert an LSP `SignatureInformation` to our schema's
+/// `LspSignatureInfo`. Flattens Documentation enums (String or
+/// MarkupContent) to plain strings and resolves ParameterLabel offsets
+/// into the signature label so consumers don't have to.
+fn lsp_signature_info_to_schema(
+    sig: lsp::SignatureInformation,
+) -> helix_context_schema::LspSignatureInfo {
+    let label = sig.label;
+    let documentation = sig.documentation.map(|d| match d {
+        lsp::Documentation::String(s) => s,
+        lsp::Documentation::MarkupContent(mc) => mc.value,
+    });
+    let parameters = sig
+        .parameters
+        .unwrap_or_default()
+        .into_iter()
+        .map(|p| {
+            let label_str = match p.label {
+                lsp::ParameterLabel::Simple(s) => s,
+                lsp::ParameterLabel::LabelOffsets([start, end]) => label
+                    .char_indices()
+                    .nth(start as usize)
+                    .and_then(|(s_idx, _)| {
+                        label
+                            .char_indices()
+                            .nth(end as usize)
+                            .map(|(e_idx, _)| label[s_idx..e_idx].to_string())
+                    })
+                    .unwrap_or_default(),
+            };
+            let documentation = p.documentation.map(|d| match d {
+                lsp::Documentation::String(s) => s,
+                lsp::Documentation::MarkupContent(mc) => mc.value,
+            });
+            helix_context_schema::LspParameterInfo {
+                label: label_str,
+                documentation,
+            }
+        })
+        .collect();
+    helix_context_schema::LspSignatureInfo {
+        label,
+        documentation,
+        parameters,
+        active_parameter: sig.active_parameter,
+    }
+}
+
 /// Convert an LSP `DocumentSymbol` (nested form) to our schema's
 /// `DocumentSymbol`. Recursive — children are walked the same way.
 /// Used by `GetDocumentSymbols` when the LSP returns the nested form.
@@ -2605,6 +2653,92 @@ impl Application {
                         }),
                     });
                     helix_context_schema::ControlResponse::GetHoverAt { hover }
+                });
+                return;
+            }
+            ControlRequest::GetSignatureHelp { line, column, path, allow_insert_mode } => {
+                // Signature help is *designed* to be called mid-typing —
+                // the LSP returns the call shape for whatever the cursor
+                // is currently in. Default-allow Insert mode; the caller
+                // can pass allow_insert_mode: false to opt back in to
+                // the standard refusal if they want it.
+                let effective = Some(allow_insert_mode.unwrap_or(true));
+                if let Err(e) = ensure_buffer_mode_safe(&self.editor, effective) {
+                    let _ = reply.send(Err(e));
+                    return;
+                }
+                let doc = match resolve_buffer(&self.editor, &workspace, path.as_deref()) {
+                    Ok(d) => d,
+                    Err(e) => {
+                        let _ = reply.send(Err(e));
+                        return;
+                    }
+                };
+                let Some(_doc_url) = doc.url() else {
+                    let _ = reply.send(Err(JsonRpcError {
+                        code: JsonRpcErrorCode::NoActiveDocument,
+                        message: "document has no URL".into(),
+                        data: None,
+                    }));
+                    return;
+                };
+
+                let lsp_client = doc
+                    .language_servers_with_feature(
+                        helix_core::syntax::config::LanguageServerFeature::SignatureHelp,
+                    )
+                    .next();
+                let Some(lsp_client) = lsp_client else {
+                    let _ = reply.send(Err(JsonRpcError {
+                        code: JsonRpcErrorCode::NoLspForLanguage,
+                        message: "no LSP supporting signature-help for this document".into(),
+                        data: None,
+                    }));
+                    return;
+                };
+
+                let text = doc.text();
+                let pos_char = one_indexed_to_char(text, line, column);
+                let lsp_pos = helix_lsp::util::pos_to_lsp_pos(
+                    text,
+                    pos_char,
+                    lsp_client.offset_encoding(),
+                );
+
+                let doc_id = doc.identifier();
+                let future = match lsp_client.text_document_signature_help(doc_id, lsp_pos, None) {
+                    Some(f) => f,
+                    None => {
+                        let _ = reply.send(Err(JsonRpcError {
+                            code: JsonRpcErrorCode::NoLspForLanguage,
+                            message: "LSP server does not support signature-help".into(),
+                            data: None,
+                        }));
+                        return;
+                    }
+                };
+
+                spawn_lsp_request(reply, future, |sh: Option<lsp::SignatureHelp>| {
+                    let sh = match sh {
+                        Some(sh) => sh,
+                        None => {
+                            return helix_context_schema::ControlResponse::GetSignatureHelp {
+                                signatures: Vec::new(),
+                                active_signature: None,
+                                active_parameter: None,
+                            };
+                        }
+                    };
+                    let signatures = sh
+                        .signatures
+                        .into_iter()
+                        .map(lsp_signature_info_to_schema)
+                        .collect();
+                    helix_context_schema::ControlResponse::GetSignatureHelp {
+                        signatures,
+                        active_signature: sh.active_signature,
+                        active_parameter: sh.active_parameter,
+                    }
                 });
                 return;
             }
