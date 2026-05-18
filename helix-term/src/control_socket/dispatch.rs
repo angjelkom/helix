@@ -35,6 +35,8 @@ pub fn try_dispatch_inline(
         | ControlRequest::GetWorkspaceSymbols { .. }
         | ControlRequest::GetDocumentSymbols { .. }
         | ControlRequest::GetSignatureHelp { .. }
+        | ControlRequest::GetJumplist { .. }
+        | ControlRequest::Jump { .. }
         | ControlRequest::FormatDocument { .. }
         | ControlRequest::RunCommand { .. } => None,
     }
@@ -75,12 +77,14 @@ fn handle_initialize(
                 "get-document-symbols".into(),
                 "get-signature-help".into(),
                 "get-selections".into(),
+                "get-jumplist".into(),
             ],
             write_methods: vec![
                 "open-file".into(),
                 "goto-line".into(),
                 "select-range".into(),
                 "select-multi".into(),
+                "jump".into(),
                 "format-document".into(),
                 "run-command".into(),
             ],

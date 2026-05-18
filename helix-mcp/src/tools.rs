@@ -31,6 +31,8 @@ pub enum ToolKind {
     HelixGetSignatureHelp,
     HelixGetSelection,
     HelixBufferRead,
+    HelixGetJumplist,
+    HelixJump,
     HelixFormatDocument,
     HelixRunCommand,
 }
@@ -204,6 +206,31 @@ pub const TOOLS: &[ToolSpec] = &[
              active one.",
         schema: schemas::buffer_read,
         parse_request: parsers::buffer_read,
+    },
+    ToolSpec {
+        kind: ToolKind::HelixGetJumplist,
+        name: "helix_get_jumplist",
+        description:
+            "Return the active view's jumplist — an ordered history of cursor \
+             positions the user has jumped to or from (LSP go-to-definition, \
+             window splits, etc.). Each entry has path, line, column, and \
+             `is_current` flagging where the user is now. Use to retrace where \
+             the user has been, or pair with helix_jump to step back/forward.",
+        schema: schemas::no_args,
+        parse_request: parsers::get_jumplist,
+    },
+    ToolSpec {
+        kind: ToolKind::HelixJump,
+        name: "helix_jump",
+        description:
+            "Step along the active view's jumplist by `offset` entries. \
+             Negative goes backward through history (like Ctrl-O in vim), \
+             positive forward (like Ctrl-I). `offset: -1` is the typical \
+             'go back' action. View recenters on the destination. Returns \
+             Ok regardless of whether the bound was reached — use \
+             helix_get_jumplist afterward to confirm position.",
+        schema: schemas::jump,
+        parse_request: parsers::jump,
     },
     ToolSpec {
         kind: ToolKind::HelixFormatDocument,
@@ -383,6 +410,14 @@ pub struct HelixBufferReadArgs {
 pub struct HelixFormatDocumentArgs {
     #[serde(default)]
     pub path: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct HelixGetJumplistArgs {}
+
+#[derive(Debug, Deserialize)]
+pub struct HelixJumpArgs {
+    pub offset: i32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -573,6 +608,28 @@ mod schemas {
             "required": ["name"]
         })
     }
+
+    /// Schema for tools that take no arguments. `properties: {}` keeps
+    /// `tools/list` clients happy that always expect an object.
+    pub fn no_args() -> Value {
+        json!({
+            "type": "object",
+            "properties": {}
+        })
+    }
+
+    pub fn jump() -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "offset": {
+                    "type": "integer",
+                    "description": "How many jumplist entries to traverse. Negative goes backward (-1 = go back one step), positive forward."
+                }
+            },
+            "required": ["offset"]
+        })
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -715,6 +772,16 @@ mod parsers {
             args: a.args,
         })
     }
+
+    pub fn get_jumplist(v: Value) -> Result<ControlRequest, serde_json::Error> {
+        let _: HelixGetJumplistArgs = serde_json::from_value(v)?;
+        Ok(ControlRequest::GetJumplist {})
+    }
+
+    pub fn jump(v: Value) -> Result<ControlRequest, serde_json::Error> {
+        let a: HelixJumpArgs = serde_json::from_value(v)?;
+        Ok(ControlRequest::Jump { offset: a.offset })
+    }
 }
 
 #[cfg(test)]
@@ -741,6 +808,8 @@ mod tests {
             ToolKind::HelixGetSignatureHelp,
             ToolKind::HelixGetSelection,
             ToolKind::HelixBufferRead,
+            ToolKind::HelixGetJumplist,
+            ToolKind::HelixJump,
             ToolKind::HelixFormatDocument,
             ToolKind::HelixRunCommand,
         ];
@@ -753,9 +822,9 @@ mod tests {
     }
 
     #[test]
-    fn all_iterates_fifteen_kinds() {
+    fn all_iterates_seventeen_kinds() {
         let kinds: Vec<_> = ToolKind::all().collect();
-        assert_eq!(kinds.len(), 15);
+        assert_eq!(kinds.len(), 17);
     }
 
     #[test]
