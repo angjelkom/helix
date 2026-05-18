@@ -100,6 +100,25 @@ pub struct LspDiagnostic {
     pub message: String,
 }
 
+/// LSP code action descriptor returned by `GetCodeActions`. The
+/// `id` is opaque, server-issued, and only valid for the document
+/// revision it was minted against — calling `ApplyCodeAction` with
+/// a stale id returns `CodeActionStale`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CodeActionDescriptor {
+    pub id: String,
+    pub title: String,
+    /// LSP `CodeActionKind` if present ("quickfix", "refactor",
+    /// "refactor.extract", "source.organizeImports", …). `None` for
+    /// raw commands or actions that don't advertise a kind.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub kind: Option<String>,
+    /// Mirrors LSP's `isPreferred`: the LSP's hint that this action
+    /// is the most obvious fix. Used for sorting; clients can also
+    /// use it to auto-pick when there's exactly one preferred action.
+    pub is_preferred: bool,
+}
+
 /// One entry in the jumplist returned by `GetJumplist`. Each entry is
 /// a (file, cursor position) tuple representing where the user has
 /// been. `is_current` flags the entry the user is currently at;
@@ -298,6 +317,34 @@ pub enum ControlRequest {
         #[serde(skip_serializing_if = "Option::is_none", default)]
         path: Option<String>,
     },
+    /// LSP code actions at a 1-indexed (line, column) or range. Pass
+    /// `end_line`/`end_column` for a range; omit for the single
+    /// position only. `only` filters by LSP `CodeActionKind` prefix
+    /// (e.g. `["quickfix"]`, `["refactor.extract"]`); if omitted the
+    /// LSP returns all categories. Refuses with BufferModeUnsafe in
+    /// Insert mode unless `allow_insert_mode: true`.
+    GetCodeActions {
+        line: usize,
+        column: usize,
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        end_line: Option<usize>,
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        end_column: Option<usize>,
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        path: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        only: Option<Vec<String>>,
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        allow_insert_mode: Option<bool>,
+    },
+    /// Apply a code action previously returned by `GetCodeActions`,
+    /// looked up by its opaque `action_id`. Returns
+    /// `CodeActionStale` if the buffer has changed since the action
+    /// was minted, `CodeActionUnknown` if the id was never seen, and
+    /// the standard Ok response on success.
+    ApplyCodeAction {
+        action_id: String,
+    },
     /// Read the active view's jumplist: an ordered history of cursor
     /// positions the user has jumped to or from. Use to retrace where
     /// the user has been, or as a precursor to `Jump` for relative
@@ -383,6 +430,20 @@ pub enum ControlResponse {
         selections: Vec<crate::types::Selection>,
         primary_index: usize,
         mode: String,
+    },
+    /// Response to `GetCodeActions`. `actions` is ordered by the LSP's
+    /// own ranking (preferred first, quickfixes for visible
+    /// diagnostics ranked higher than generic refactors).
+    GetCodeActions {
+        actions: Vec<CodeActionDescriptor>,
+    },
+    /// Response to `ApplyCodeAction`. `applied` is true on successful
+    /// application; `message` carries optional LSP feedback (e.g. the
+    /// `command.title` that ran).
+    ApplyCodeAction {
+        applied: bool,
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        message: Option<String>,
     },
     /// Response to `GetJumplist`. `entries` is ordered oldest → newest
     /// in jumplist history. `current_index` is which entry the user is

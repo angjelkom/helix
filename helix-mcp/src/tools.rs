@@ -33,6 +33,8 @@ pub enum ToolKind {
     HelixBufferRead,
     HelixGetJumplist,
     HelixJump,
+    HelixGetCodeActions,
+    HelixApplyCodeAction,
     HelixFormatDocument,
     HelixRunCommand,
 }
@@ -233,6 +235,34 @@ pub const TOOLS: &[ToolSpec] = &[
         parse_request: parsers::jump,
     },
     ToolSpec {
+        kind: ToolKind::HelixGetCodeActions,
+        name: "helix_get_code_actions",
+        description:
+            "List LSP code actions available at a 1-indexed (line, column) or \
+             range. Returns an ordered list with opaque `id`s and human-readable \
+             `title`s; `is_preferred: true` is the LSP's signal that this is the \
+             obvious fix. Pair with `helix_apply_code_action(id)` to apply one. \
+             Use when fixing a diagnostic — the LSP-generated transform is \
+             always more accurate than a hand-edit. Pass `only` to filter by \
+             kind (\"quickfix\", \"refactor.extract\", \"source.organizeImports\", \
+             …). Refuses in Insert mode unless allow_insert_mode: true.",
+        schema: schemas::get_code_actions,
+        parse_request: parsers::get_code_actions,
+    },
+    ToolSpec {
+        kind: ToolKind::HelixApplyCodeAction,
+        name: "helix_apply_code_action",
+        description:
+            "Apply a code action previously returned by `helix_get_code_actions`, \
+             addressed by its opaque `action_id`. Returns `applied: true` and the \
+             action title on success. Returns -32006 CodeActionStale if the buffer \
+             changed since the id was issued (call get_code_actions again). \
+             Returns -32007 CodeActionUnknown if the id was never issued or has \
+             been evicted from the bridge's bounded cache.",
+        schema: schemas::apply_code_action,
+        parse_request: parsers::apply_code_action,
+    },
+    ToolSpec {
         kind: ToolKind::HelixFormatDocument,
         name: "helix_format_document",
         description:
@@ -418,6 +448,27 @@ pub struct HelixGetJumplistArgs {}
 #[derive(Debug, Deserialize)]
 pub struct HelixJumpArgs {
     pub offset: i32,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct HelixGetCodeActionsArgs {
+    pub line: usize,
+    pub column: usize,
+    #[serde(default)]
+    pub end_line: Option<usize>,
+    #[serde(default)]
+    pub end_column: Option<usize>,
+    #[serde(default)]
+    pub path: Option<String>,
+    #[serde(default)]
+    pub only: Option<Vec<String>>,
+    #[serde(default)]
+    pub allow_insert_mode: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct HelixApplyCodeActionArgs {
+    pub action_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -630,6 +681,36 @@ mod schemas {
             "required": ["offset"]
         })
     }
+
+    pub fn get_code_actions() -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "line": { "type": "integer", "minimum": 1 },
+                "column": { "type": "integer", "minimum": 1 },
+                "end_line": { "type": "integer", "minimum": 1, "description": "Optional: pair with end_column to query over a range instead of a point." },
+                "end_column": { "type": "integer", "minimum": 1 },
+                "path": { "type": "string", "description": "Buffer path (optional; defaults to active)" },
+                "only": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Optional CodeActionKind filter: e.g. [\"quickfix\"], [\"refactor.extract\"], [\"source.organizeImports\"]"
+                },
+                "allow_insert_mode": { "type": "boolean", "description": "Bypass the BufferModeUnsafe refusal in Insert mode" }
+            },
+            "required": ["line", "column"]
+        })
+    }
+
+    pub fn apply_code_action() -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "action_id": { "type": "string", "description": "Opaque id from a prior helix_get_code_actions call" }
+            },
+            "required": ["action_id"]
+        })
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -782,6 +863,27 @@ mod parsers {
         let a: HelixJumpArgs = serde_json::from_value(v)?;
         Ok(ControlRequest::Jump { offset: a.offset })
     }
+
+    pub fn get_code_actions(v: Value) -> Result<ControlRequest, serde_json::Error> {
+        let a: HelixGetCodeActionsArgs = serde_json::from_value(v)?;
+        // Caller may pass end_line without end_column (or vice versa); the
+        // wire method already treats either-missing as "point query".
+        // Stricter validation would make the tool brittle for no win.
+        Ok(ControlRequest::GetCodeActions {
+            line: a.line,
+            column: a.column,
+            end_line: a.end_line,
+            end_column: a.end_column,
+            path: a.path,
+            only: a.only,
+            allow_insert_mode: a.allow_insert_mode,
+        })
+    }
+
+    pub fn apply_code_action(v: Value) -> Result<ControlRequest, serde_json::Error> {
+        let a: HelixApplyCodeActionArgs = serde_json::from_value(v)?;
+        Ok(ControlRequest::ApplyCodeAction { action_id: a.action_id })
+    }
 }
 
 #[cfg(test)]
@@ -810,6 +912,8 @@ mod tests {
             ToolKind::HelixBufferRead,
             ToolKind::HelixGetJumplist,
             ToolKind::HelixJump,
+            ToolKind::HelixGetCodeActions,
+            ToolKind::HelixApplyCodeAction,
             ToolKind::HelixFormatDocument,
             ToolKind::HelixRunCommand,
         ];
@@ -822,9 +926,9 @@ mod tests {
     }
 
     #[test]
-    fn all_iterates_seventeen_kinds() {
+    fn all_iterates_nineteen_kinds() {
         let kinds: Vec<_> = ToolKind::all().collect();
-        assert_eq!(kinds.len(), 17);
+        assert_eq!(kinds.len(), 19);
     }
 
     #[test]
