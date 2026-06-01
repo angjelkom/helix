@@ -153,7 +153,7 @@ pub(crate) fn build_snapshot(
         }
     }
 
-    let path_abs: Option<PathBuf> = doc.path().cloned();
+    let path_abs: Option<PathBuf> = doc.path().map(|p| p.to_path_buf());
     let path_rel: Option<String> = path_abs.as_ref().and_then(|p| {
         p.strip_prefix(workspace)
             .ok()

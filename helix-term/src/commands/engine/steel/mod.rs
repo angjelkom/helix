@@ -1480,7 +1480,7 @@ fn load_editor_api(engine: &mut Engine, generate_sources: bool) {
             CTX,
             "editor-document-reload",
             |cx: &mut Context, doc: DocumentId| -> anyhow::Result<()> {
-                let path = cx.editor.documents.get(&doc).and_then(|x| x.path().cloned());
+                let path = cx.editor.documents.get(&doc).and_then(|x| x.path().map(|p| p.to_path_buf()));
                 for (view, _) in cx.editor.tree.views_mut() {
                     if let Some(x) = cx.editor.documents.get_mut(&doc) {
                         x.reload(view, &cx.editor.diff_providers)?;
