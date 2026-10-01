@@ -1675,6 +1675,7 @@ impl Component for EditorView {
             Event::FocusGained => {
                 helix_event::dispatch(TerminalFocusGained { cx: &mut cx });
                 self.terminal_focused = true;
+                crate::handlers::auto_reload::on_focus_gained(context.editor);
                 EventResult::Consumed(None)
             }
             Event::FocusLost => {
@@ -1772,6 +1773,8 @@ impl Component for EditorView {
             use helix_view::editor::Severity;
             let style = if *severity == Severity::Error {
                 cx.editor.theme.get("error")
+            } else if *severity == Severity::Warning {
+                cx.editor.theme.get("warning")
             } else {
                 cx.editor.theme.get("ui.text")
             };
