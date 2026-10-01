@@ -128,7 +128,7 @@ fn start_control_socket(
     Ok(ControlSocketSession {
         resolved: resolved_for_cleanup,
         pid: std::process::id(),
-        started_at: chrono::Utc::now().to_rfc3339(),
+        started_at: format!("{}Z", crate::logging::log_timestamp()),
     })
 }
 

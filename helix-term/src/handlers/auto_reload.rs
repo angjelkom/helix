@@ -210,8 +210,15 @@ fn handle_document_change(
             editor.set_warning(msg);
         }
     } else {
+        let trust_full = editor
+            .workspace_trust
+            .query(
+                doc.workspace_root(),
+                helix_loader::workspace_trust::TrustQuery::Git,
+            )
+            .is_trusted();
         let view = view_mut!(editor, target_view_id);
-        match doc.reload(view, &editor.diff_providers) {
+        match doc.reload(view, &editor.diff_providers, trust_full) {
             Ok(_) => {
                 view.ensure_cursor_in_view(doc, scrolloff);
                 let msg = format!(
@@ -238,7 +245,14 @@ fn reload_vcs_diffs(editor: &mut Editor) {
         let Some(path) = doc.path() else {
             continue;
         };
-        match editor.diff_providers.get_diff_base(path) {
+        let trust_full = editor
+            .workspace_trust
+            .query(
+                doc.workspace_root(),
+                helix_loader::workspace_trust::TrustQuery::Git,
+            )
+            .is_trusted();
+        match editor.diff_providers.get_diff_base(path, trust_full) {
             Some(diff_base) => doc.set_diff_base(diff_base),
             None => doc.diff_handle = None,
         }
@@ -260,8 +274,13 @@ fn prompt_reload_modified(compositor: &mut Compositor, doc_id: DocumentId, path_
                     let scrolloff = cx.editor.config().scrolloff;
                     let target_view_id = cx.editor.get_synced_view_id(doc_id);
                     let doc = doc_mut!(cx.editor, &doc_id);
+                    let trust_full = cx
+                        .editor
+                        .workspace_trust
+                        .query(doc.workspace_root(), helix_loader::workspace_trust::TrustQuery::Git)
+                        .is_trusted();
                     let view = view_mut!(cx.editor, target_view_id);
-                    match doc.reload(view, &cx.editor.diff_providers) {
+                    match doc.reload(view, &cx.editor.diff_providers, trust_full) {
                         Ok(_) => {
                             view.ensure_cursor_in_view(doc, scrolloff);
                             cx.editor.set_status(format!("{path_str} reloaded"));

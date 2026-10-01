@@ -2441,6 +2441,7 @@ dependencies = [
  "libc",
  "log",
  "nucleo",
+ "once_cell",
  "open",
  "parking_lot",
  "pulldown-cmark",

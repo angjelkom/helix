@@ -89,8 +89,10 @@ impl FileBlame {
 
     /// Compute blame for this file (expensive)
     pub fn try_new(file: PathBuf) -> Result<Self> {
+        // Blame only reads history, so always open with reduced trust: untrusted repo-local config
+        // (e.g. diff drivers / textconv) is never honored, regardless of workspace trust.
         let thread_safe_repo =
-            open_repo(get_repo_dir(&file)?).context("Failed to open git repo")?;
+            open_repo(get_repo_dir(&file)?, false).context("Failed to open git repo")?;
         let repo = thread_safe_repo.to_thread_local();
         let head = repo.head()?.peel_to_commit()?.id;
 

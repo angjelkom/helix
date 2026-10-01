@@ -187,7 +187,7 @@ pub(crate) fn build_snapshot(
     ContextSnapshot {
         schema_version: SCHEMA_VERSION,
         min_supported_reader: MIN_SUPPORTED_READER,
-        timestamp: chrono::Utc::now().to_rfc3339(),
+        timestamp: format!("{}Z", crate::logging::log_timestamp()),
         last_update_source: source,
         instance,
         project_root: workspace.to_string_lossy().into_owned(),
