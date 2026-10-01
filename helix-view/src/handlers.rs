@@ -48,6 +48,8 @@ pub struct Handlers {
     pub pull_diagnostics: Sender<lsp::PullDiagnosticsEvent>,
     pub pull_all_documents_diagnostics: Sender<lsp::PullAllDocumentsDiagnosticsEvent>,
     pub code_action_hint: Sender<lsp::CodeActionHintEvent>,
+    /// Auto-trigger via channel; manual trigger bypasses debounce (see helix-term handler)
+    pub inline_completions: Sender<()>,
 }
 
 impl Handlers {
